@@ -42,6 +42,7 @@ const Dashboard = () => {
 
   const loadDashboard = async () => {
     setLoading(true);
+
     try {
       const [statsRes, salesRes, productsRes, overdueRes] = await Promise.all([
         api.get("/dashboard/stats"),
@@ -88,37 +89,20 @@ const Dashboard = () => {
     return Object.values(map).slice(-7);
   }, [sales]);
 
-  const inventoryChart = useMemo(() => {
-    const inStock = products.filter(
-      (p) => p.status === "in_stock" && Number(p.quantity || 0) > 0
-    ).length;
-
-    const lowStock = products.filter(
-      (p) =>
-        Number(p.quantity || 0) > 0 &&
-        Number(p.quantity || 0) <= Number(p.lowStockAlertQty || 1)
-    ).length;
-
-    const outStock = products.filter(
-      (p) => Number(p.quantity || 0) <= 0 || p.status === "sold"
-    ).length;
-
-    return [
-      { name: "In Stock", value: inStock },
-      { name: "Low Stock", value: lowStock },
-      { name: "Out Stock", value: outStock },
-    ];
-  }, [products]);
-
   const installmentChart = useMemo(() => {
-    const pending = Number(stats?.installments?.pendingInstallmentAmount || 0);
-    const overdueAmount = Number(stats?.installments?.overdueAmount || 0);
-    const recovered = Number(stats?.installments?.recoveredInstallments || 0);
-
     return [
-      { name: "Recovered", value: recovered },
-      { name: "Pending", value: pending },
-      { name: "Overdue", value: overdueAmount },
+      {
+        name: "Recovered",
+        value: Number(stats?.installments?.recoveredInstallments || 0),
+      },
+      {
+        name: "Pending",
+        value: Number(stats?.installments?.pendingInstallmentAmount || 0),
+      },
+      {
+        name: "Overdue",
+        value: Number(stats?.installments?.overdueAmount || 0),
+      },
     ];
   }, [stats]);
 
@@ -159,7 +143,7 @@ const Dashboard = () => {
             Dashboard
           </motion.h1>
           <p className="text-gray-400 mt-1">
-            Welcome back, Admin 👋
+            Master Electronics business overview
           </p>
         </div>
 
@@ -179,23 +163,26 @@ const Dashboard = () => {
         className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 mb-5"
       >
         <MainCard
-          icon={TrendingUp}
-          title="Total Sales"
-          value={formatMoney(stats.sales?.totalSales)}
+          icon={Wallet}
+          title="Total Business Capital"
+          value={formatMoney(stats.finance?.totalCapital)}
           glow="green"
         />
+
         <MainCard
-          icon={CreditCard}
-          title="Cash Sales"
-          value={formatMoney(stats.sales?.cashSales)}
+          icon={Boxes}
+          title="Inventory Purchased"
+          value={formatMoney(stats.finance?.inventoryPurchased)}
           glow="blue"
         />
+
         <MainCard
-          icon={CalendarClock}
-          title="Installment Sales"
-          value={formatMoney(stats.sales?.installmentSales)}
+          icon={Banknote}
+          title="Available Capital"
+          value={formatMoney(stats.finance?.availableCapital)}
           glow="purple"
         />
+
         <MainCard
           icon={HandCoins}
           title="Total Profit"
@@ -209,7 +196,7 @@ const Dashboard = () => {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-white">Sales Overview</h2>
             <span className="text-xs text-yellow-300 bg-yellow-500/10 px-3 py-1 rounded-full">
-              Last Activity
+              Recent Activity
             </span>
           </div>
 
@@ -299,12 +286,38 @@ const Dashboard = () => {
         transition={{ staggerChildren: 0.06 }}
         className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4 mb-5"
       >
-        <MiniCard icon={Banknote} title="Total Invested" value={formatMoney(stats.sales?.totalInvested)} />
-        <MiniCard icon={Wallet} title="Total Regained" value={formatMoney(stats.sales?.totalRegained)} />
-        <MiniCard icon={ArrowUpRight} title="Profit Recovered" value={formatMoney(stats.sales?.profitRecovered)} />
-        <MiniCard icon={HandCoins} title="Profit Pending" value={formatMoney(stats.sales?.profitPending)} danger />
-        <MiniCard icon={CalendarClock} title="Overdue Amount" value={formatMoney(stats.installments?.overdueAmount)} danger />
-        <MiniCard icon={Users} title="Overdue Count" value={stats.installments?.overdueInstallmentsCount || 0} danger />
+        <MiniCard
+          icon={Banknote}
+          title="Total Regained"
+          value={formatMoney(stats.finance?.totalRegained)}
+        />
+        <MiniCard
+          icon={Wallet}
+          title="Partner Withdrawals"
+          value={formatMoney(stats.finance?.partnerWithdrawals)}
+        />
+        <MiniCard
+          icon={CreditCard}
+          title="Donation Paid"
+          value={formatMoney(stats.finance?.donationPaid)}
+        />
+        <MiniCard
+          icon={ArrowUpRight}
+          title="Profit Recovered"
+          value={formatMoney(stats.sales?.profitRecovered)}
+        />
+        <MiniCard
+          icon={HandCoins}
+          title="Profit Pending"
+          value={formatMoney(stats.sales?.profitPending)}
+          danger
+        />
+        <MiniCard
+          icon={CalendarClock}
+          title="Overdue Amount"
+          value={formatMoney(stats.installments?.overdueAmount)}
+          danger
+        />
       </motion.div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-5">
@@ -324,13 +337,17 @@ const Dashboard = () => {
         </AnimatedPanel>
 
         <AnimatedPanel>
-          <h2 className="text-xl font-bold text-white mb-4">Low Stock Alert</h2>
+          <h2 className="text-xl font-bold text-white mb-4">
+            Low Stock Alert
+          </h2>
           <div className="space-y-3">
             {lowStockItems.map((p) => (
               <ListRow
                 key={p.id}
                 title={p.productName}
-                subtitle={`Stock: ${p.quantity} | Min: ${p.lowStockAlertQty || 1}`}
+                subtitle={`Stock: ${p.quantity} | Min: ${
+                  p.lowStockAlertQty || 1
+                }`}
                 value={p.quantity <= 0 ? "Out" : "Low"}
                 badge={p.quantity <= 0 ? "out" : "low"}
               />
@@ -339,14 +356,20 @@ const Dashboard = () => {
         </AnimatedPanel>
 
         <AnimatedPanel>
-          <h2 className="text-xl font-bold text-white mb-4">Top Due Customers</h2>
+          <h2 className="text-xl font-bold text-white mb-4">
+            Top Due Customers
+          </h2>
           <div className="space-y-3">
             {topDueCustomers.map((item) => (
               <ListRow
                 key={item.id}
                 title={item.customer?.name || `Customer #${item.customerId}`}
-                subtitle={`Due: ${item.dueDate} | Late: ${item.liveLateDays || 0} days`}
-                value={formatMoney(item.liveTotalPayable || item.remainingAmount)}
+                subtitle={`Due: ${item.dueDate} | Late: ${
+                  item.liveLateDays || 0
+                } days`}
+                value={formatMoney(
+                  item.liveTotalPayable || item.remainingAmount
+                )}
                 badge="due"
               />
             ))}
@@ -357,26 +380,29 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-5">
         <GlowBox
           icon={Boxes}
-          title="Inventory Value"
+          title="Current Inventory Value"
           value={formatMoney(stats.inventory?.inventoryValue)}
           color="yellow"
         />
+
+        <GlowBox
+          icon={TrendingUp}
+          title="Expected Inventory Sale"
+          value={formatMoney(stats.inventory?.expectedInventorySaleValue)}
+          color="blue"
+        />
+
         <GlowBox
           icon={PackageX}
           title="Total Products"
           value={stats.inventory?.totalProducts || 0}
-          color="blue"
-        />
-        <GlowBox
-          icon={HandCoins}
-          title="Partner Investment"
-          value={formatMoney(stats.partners?.totalPartnerInvestment)}
           color="green"
         />
+
         <GlowBox
           icon={Wallet}
-          title="Partner Balance"
-          value={formatMoney(stats.partners?.totalPartnerBalance)}
+          title="Available Capital"
+          value={formatMoney(stats.finance?.availableCapital)}
           color="purple"
         />
       </div>
@@ -391,12 +417,17 @@ const MainCard = ({ icon: Icon, title, value, glow }) => (
     whileHover={{ y: -5, scale: 1.02 }}
     className="relative overflow-hidden bg-[#0b0b0b]/90 border border-yellow-600/25 rounded-3xl p-5 shadow-xl"
   >
-    <div className={`absolute -right-10 -top-10 h-32 w-32 rounded-full blur-3xl ${
-      glow === "green" ? "bg-green-500/20" :
-      glow === "blue" ? "bg-blue-500/20" :
-      glow === "purple" ? "bg-purple-500/20" :
-      "bg-yellow-500/20"
-    }`} />
+    <div
+      className={`absolute -right-10 -top-10 h-32 w-32 rounded-full blur-3xl ${
+        glow === "green"
+          ? "bg-green-500/20"
+          : glow === "blue"
+          ? "bg-blue-500/20"
+          : glow === "purple"
+          ? "bg-purple-500/20"
+          : "bg-yellow-500/20"
+      }`}
+    />
 
     <div className="flex items-center gap-4">
       <div className="h-14 w-14 rounded-2xl bg-yellow-500/10 flex items-center justify-center text-yellow-400">

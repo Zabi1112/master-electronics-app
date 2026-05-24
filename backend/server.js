@@ -14,6 +14,7 @@ const installmentRoutes = require("./routes/installmentRoutes");
 const partnerRoutes = require("./routes/partnerRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+const financeRoutes = require("./routes/financeRoutes");
 
 require("./models");
 
@@ -36,12 +37,13 @@ app.use("/api/installments", installmentRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/reports", reportRoutes);
-
+app.use("/api/finance", financeRoutes);
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   await connectDB();
   await sequelize.sync();
+  //await sequelize.sync({ alter: true });
   console.log("Tables synced");
 });

@@ -3,6 +3,7 @@ const Product = require("../models/Product");
 const Sale = require("../models/Sale");
 const Installment = require("../models/Installment");
 const Partner = require("../models/Partner");
+const DonationRecord = require("../models/DonationRecord");
 
 const sumField = async (Model, field, where = {}) => {
   const result = await Model.findOne({
@@ -18,23 +19,56 @@ exports.getDashboardStats = async (req, res) => {
   try {
     const today = new Date().toISOString().split("T")[0];
 
+    const products = await Product.findAll({ raw: true });
+
+    const currentInventoryValue = products.reduce((sum, p) => {
+      if (p.status === "in_stock") {
+        return sum + Number(p.purchasePrice || 0) * Number(p.quantity || 0);
+      }
+      return sum;
+    }, 0);
+
+    const expectedInventorySaleValue = products.reduce((sum, p) => {
+      if (p.status === "in_stock") {
+        return sum + Number(p.salePrice || 0) * Number(p.quantity || 0);
+      }
+      return sum;
+    }, 0);
+
+    const soldInventoryCost = await sumField(Sale, "purchasePrice");
+
+    const totalInventoryPurchased =
+      Number(currentInventoryValue || 0) + Number(soldInventoryCost || 0);
+
+    const totalPartnerInvestment = await sumField(Partner, "totalInvested");
+    const totalPartnerWithdrawals = await sumField(Partner, "totalWithdrawn");
+    const totalPartnerBalance = await sumField(Partner, "currentBalance");
+
+    const totalDonationPaid = await sumField(DonationRecord, "donationAmount", {
+      status: "paid",
+    });
+
     const totalSales = await sumField(Sale, "finalAmount");
     const cashSales = await sumField(Sale, "finalAmount", { saleType: "cash" });
     const installmentSales = await sumField(Sale, "finalAmount", {
       saleType: "installment",
     });
 
-    const totalInvested = await sumField(Sale, "purchasePrice");
     const totalRegained = await sumField(Sale, "paidAmount");
     const totalProfit = await sumField(Sale, "profit");
     const profitRecovered = await sumField(Sale, "profitRecovered");
     const profitPending = await sumField(Sale, "profitPending");
 
+    const availableCapital =
+      Number(totalPartnerInvestment || 0) -
+      Number(totalPartnerWithdrawals || 0) -
+      Number(totalInventoryPurchased || 0) +
+      Number(totalRegained || 0) -
+      Number(totalDonationPaid || 0);
+
     const amountCirclingInstallments = await sumField(Sale, "remainingAmount", {
       saleType: "installment",
-      status: {
-        [Op.in]: ["active", "cleared"],
-      },
+      status: { [Op.in]: ["active", "cleared"] },
     });
 
     const recoveredInstallments = await sumField(Sale, "paidAmount", {
@@ -54,27 +88,18 @@ exports.getDashboardStats = async (req, res) => {
       }
     );
 
-    const todayCollection = await sumField(Sale, "paidAmount", {
-      createdAt: {
-        [Op.gte]: new Date(`${today}T00:00:00`),
-        [Op.lte]: new Date(`${today}T23:59:59`),
-      },
-    });
-
-    const inventoryValue = await sumField(Product, "purchasePrice", {
-      status: "in_stock",
-    });
-
     const totalProducts = await Product.count();
-    const inStockProducts = await Product.count({ where: { status: "in_stock" } });
+    const inStockProducts = await Product.count({
+      where: { status: "in_stock" },
+    });
     const soldProducts = await Product.count({ where: { status: "sold" } });
-
-    const totalPartnerInvestment = await sumField(Partner, "totalInvested");
-    const totalPartnerWithdrawals = await sumField(Partner, "totalWithdrawn");
-    const totalPartnerBalance = await sumField(Partner, "currentBalance");
 
     const activeInstallmentSales = await Sale.count({
       where: { saleType: "installment", status: "active" },
+    });
+
+    const clearedInstallmentSales = await Sale.count({
+      where: { saleType: "installment", status: "cleared" },
     });
 
     const overdueInstallmentsCount = await Installment.count({
@@ -85,12 +110,19 @@ exports.getDashboardStats = async (req, res) => {
     });
 
     res.json({
+      finance: {
+        totalCapital: totalPartnerInvestment,
+        partnerWithdrawals: totalPartnerWithdrawals,
+        donationPaid: totalDonationPaid,
+        inventoryPurchased: totalInventoryPurchased,
+        availableCapital,
+        totalRegained,
+      },
+
       sales: {
         totalSales,
         cashSales,
         installmentSales,
-        totalInvested,
-        totalRegained,
         totalProfit,
         profitRecovered,
         profitPending,
@@ -102,11 +134,13 @@ exports.getDashboardStats = async (req, res) => {
         pendingInstallmentAmount,
         overdueAmount,
         activeInstallmentSales,
+        clearedInstallmentSales,
         overdueInstallmentsCount,
       },
 
       inventory: {
-        inventoryValue,
+        inventoryValue: currentInventoryValue,
+        expectedInventorySaleValue,
         totalProducts,
         inStockProducts,
         soldProducts,

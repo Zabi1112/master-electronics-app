@@ -8,6 +8,7 @@ import {
   CalendarClock,
   HandCoins,
   BarChart3,
+  Settings,
   LogOut,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -21,6 +22,7 @@ const navItems = [
   { label: "Installments", path: "/installments", icon: CalendarClock },
   { label: "Partners", path: "/partners", icon: HandCoins },
   { label: "Reports", path: "/reports", icon: BarChart3 },
+  { label: "Finance", path: "/finance", icon: Settings },
 ];
 
 const MainLayout = () => {

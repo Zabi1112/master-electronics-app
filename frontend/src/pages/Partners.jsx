@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 
+const money = (v) => Number(v || 0).toLocaleString();
+
 const emptyPartner = {
   name: "",
   phone: "",
@@ -19,13 +21,13 @@ const emptyTransaction = {
 const transactionTypes = [
   { value: "investment", label: "Investment" },
   { value: "withdrawal", label: "Withdrawal" },
-  { value: "profit_credit", label: "Profit Credit" },
   { value: "loss_debit", label: "Loss Debit" },
   { value: "adjustment", label: "Adjustment" },
 ];
 
 const Partners = () => {
   const [partners, setPartners] = useState([]);
+  const [profitShares, setProfitShares] = useState(null);
   const [selectedPartner, setSelectedPartner] = useState(null);
   const [partnerDetails, setPartnerDetails] = useState(null);
 
@@ -43,8 +45,13 @@ const Partners = () => {
     setError("");
 
     try {
-      const res = await api.get("/partners");
-      setPartners(res.data);
+      const [partnersRes, sharesRes] = await Promise.all([
+        api.get("/partners"),
+        api.get("/finance/partners/profit-shares"),
+      ]);
+
+      setPartners(partnersRes.data);
+      setProfitShares(sharesRes.data);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load partners");
     } finally {
@@ -65,25 +72,47 @@ const Partners = () => {
     loadPartners();
   }, []);
 
+  const getShare = (partnerId) => {
+    return profitShares?.shares?.find(
+      (s) => String(s.partnerId) === String(partnerId)
+    );
+  };
+
+  const partnersWithCalculatedBalance = useMemo(() => {
+    return partners.map((partner) => {
+      const share = getShare(partner.id);
+
+      return {
+        ...partner,
+        autoProfitShare: Number(share?.profitShare || 0),
+        calculatedBalance:
+          share?.calculatedBalance !== undefined
+            ? Number(share.calculatedBalance || 0)
+            : Number(partner.currentBalance || 0),
+        sharePercentage: Number(share?.percentage || 0),
+      };
+    });
+  }, [partners, profitShares]);
+
   const summary = useMemo(() => {
-    return partners.reduce(
+    return partnersWithCalculatedBalance.reduce(
       (acc, p) => {
         acc.totalInvested += Number(p.totalInvested || 0);
         acc.totalWithdrawn += Number(p.totalWithdrawn || 0);
-        acc.profitShare += Number(p.profitShare || 0);
+        acc.autoProfitShare += Number(p.autoProfitShare || 0);
         acc.lossShare += Number(p.lossShare || 0);
-        acc.currentBalance += Number(p.currentBalance || 0);
+        acc.calculatedBalance += Number(p.calculatedBalance || 0);
         return acc;
       },
       {
         totalInvested: 0,
         totalWithdrawn: 0,
-        profitShare: 0,
+        autoProfitShare: 0,
         lossShare: 0,
-        currentBalance: 0,
+        calculatedBalance: 0,
       }
     );
-  }, [partners]);
+  }, [partnersWithCalculatedBalance]);
 
   const createPartner = async (e) => {
     e.preventDefault();
@@ -129,16 +158,18 @@ const Partners = () => {
   };
 
   const badgeClass = (type) => {
-    if (type === "investment" || type === "profit_credit") {
-      return "bg-green-600/20 text-green-300";
-    }
-
+    if (type === "investment") return "bg-green-600/20 text-green-300";
     if (type === "withdrawal" || type === "loss_debit") {
       return "bg-red-600/20 text-red-300";
     }
-
     return "bg-yellow-600/20 text-yellow-300";
   };
+
+  const selectedCalculated = selectedPartner
+    ? partnersWithCalculatedBalance.find(
+        (p) => String(p.id) === String(selectedPartner.id)
+      )
+    : null;
 
   return (
     <div className="pb-24 md:pb-4">
@@ -148,7 +179,7 @@ const Partners = () => {
             Partners
           </h1>
           <p className="text-gray-400 text-sm">
-            Track partner investment, withdrawals, profit share, and balance.
+            Partner investment, withdrawals, auto profit share, and calculated balance.
           </p>
         </div>
 
@@ -163,10 +194,26 @@ const Partners = () => {
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 md:gap-5 mb-6">
         <SummaryCard title="Invested" value={summary.totalInvested} />
         <SummaryCard title="Withdrawn" value={summary.totalWithdrawn} />
-        <SummaryCard title="Profit Share" value={summary.profitShare} />
-        <SummaryCard title="Loss Share" value={summary.lossShare} />
-        <SummaryCard title="Balance" value={summary.currentBalance} />
+        <SummaryCard title="Auto Profit" value={summary.autoProfitShare} />
+        <SummaryCard title="Loss" value={summary.lossShare} />
+        <SummaryCard title="Calculated Balance" value={summary.calculatedBalance} />
       </div>
+
+      {profitShares && (
+        <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 mb-6">
+          <h2 className="text-lg font-bold text-yellow-400 mb-3">
+            Profit Distribution
+          </h2>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+            <MiniInfo title="Month" value={profitShares.month} />
+            <MiniInfo title="Method" value={profitShares.method} />
+            <MiniInfo title="Gross Profit" value={`Rs. ${money(profitShares.grossProfit)}`} />
+            <MiniInfo title="Donation Deducted" value={`Rs. ${money(profitShares.donationAmount)}`} />
+            <MiniInfo title="Net Profit" value={`Rs. ${money(profitShares.netProfitAfterDonation)}`} />
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-600/20 border border-red-500/40 text-red-300 rounded-xl p-3 mb-4">
@@ -248,7 +295,7 @@ const Partners = () => {
             <p className="text-yellow-400">Loading partners...</p>
           ) : (
             <div className="space-y-4">
-              {partners.map((partner) => (
+              {partnersWithCalculatedBalance.map((partner) => (
                 <div
                   key={partner.id}
                   onClick={() => openLedger(partner)}
@@ -276,8 +323,15 @@ const Partners = () => {
                   <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
                     <Info label="Invested" value={partner.totalInvested} />
                     <Info label="Withdrawn" value={partner.totalWithdrawn} />
-                    <Info label="Profit" value={partner.profitShare} />
-                    <Info label="Balance" value={partner.currentBalance} />
+                    <Info label="Auto Profit" value={partner.autoProfitShare} />
+                    <Info label="Balance" value={partner.calculatedBalance} />
+                  </div>
+
+                  <div className="mt-3 bg-yellow-500/10 rounded-xl p-3">
+                    <p className="text-xs text-gray-400">Share Percentage</p>
+                    <p className="text-yellow-300 font-bold">
+                      {partner.sharePercentage.toFixed(2)}%
+                    </p>
                   </div>
                 </div>
               ))}
@@ -293,7 +347,7 @@ const Partners = () => {
                 Select Partner
               </h2>
               <p className="text-gray-400 text-sm">
-                Tap a partner to view ledger and add transactions.
+                Tap a partner to view calculated balance and ledger.
               </p>
             </div>
           ) : (
@@ -316,6 +370,16 @@ const Partners = () => {
                   {transactionOpen ? "Close" : "+ Add Transaction"}
                 </button>
               </div>
+
+              {selectedCalculated && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                  <MiniStat title="Invested" value={selectedCalculated.totalInvested} />
+                  <MiniStat title="Withdrawn" value={selectedCalculated.totalWithdrawn} />
+                  <MiniStat title="Auto Profit" value={selectedCalculated.autoProfitShare} />
+                  <MiniStat title="Loss" value={selectedCalculated.lossShare} />
+                  <MiniStat title="Balance" value={selectedCalculated.calculatedBalance} />
+                </div>
+              )}
 
               {transactionOpen && (
                 <form
@@ -383,25 +447,6 @@ const Partners = () => {
                 </form>
               )}
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-                <MiniStat
-                  title="Invested"
-                  value={partnerDetails?.partner?.totalInvested}
-                />
-                <MiniStat
-                  title="Withdrawn"
-                  value={partnerDetails?.partner?.totalWithdrawn}
-                />
-                <MiniStat
-                  title="Profit"
-                  value={partnerDetails?.partner?.profitShare}
-                />
-                <MiniStat
-                  title="Balance"
-                  value={partnerDetails?.partner?.currentBalance}
-                />
-              </div>
-
               <div className="hidden md:block overflow-hidden rounded-2xl border border-yellow-600/30">
                 <table className="w-full">
                   <thead className="bg-yellow-500 text-black">
@@ -431,7 +476,7 @@ const Partners = () => {
                         </td>
                         <td className="p-3">{trx.description || "-"}</td>
                         <td className="p-3 text-right font-bold">
-                          {Number(trx.amount || 0).toLocaleString()}
+                          Rs. {money(trx.amount)}
                         </td>
                       </tr>
                     ))}
@@ -455,7 +500,7 @@ const Partners = () => {
                       </span>
 
                       <strong className="text-yellow-300">
-                        {Number(trx.amount || 0).toLocaleString()}
+                        Rs. {money(trx.amount)}
                       </strong>
                     </div>
 
@@ -480,8 +525,15 @@ const SummaryCard = ({ title, value }) => (
   <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4">
     <p className="text-gray-400 text-xs">{title}</p>
     <h2 className="text-xl md:text-2xl font-bold text-yellow-400">
-      {Number(value || 0).toLocaleString()}
+      Rs. {money(value)}
     </h2>
+  </div>
+);
+
+const MiniInfo = ({ title, value }) => (
+  <div className="bg-black/50 border border-yellow-600/20 rounded-xl p-3">
+    <p className="text-gray-500 text-xs">{title}</p>
+    <p className="text-yellow-300 font-bold">{value || "-"}</p>
   </div>
 );
 
@@ -489,7 +541,7 @@ const MiniStat = ({ title, value }) => (
   <div className="bg-black/60 border border-yellow-600/20 rounded-xl p-3">
     <p className="text-gray-500 text-xs">{title}</p>
     <h3 className="text-lg font-bold text-yellow-300">
-      {Number(value || 0).toLocaleString()}
+      Rs. {money(value)}
     </h3>
   </div>
 );
@@ -497,9 +549,7 @@ const MiniStat = ({ title, value }) => (
 const Info = ({ label, value }) => (
   <div>
     <p className="text-gray-500 text-xs">{label}</p>
-    <p className="text-gray-200 font-semibold">
-      {Number(value || 0).toLocaleString()}
-    </p>
+    <p className="text-gray-200 font-semibold">Rs. {money(value)}</p>
   </div>
 );
 

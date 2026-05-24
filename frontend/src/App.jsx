@@ -12,6 +12,7 @@ import Sales from "./pages/Sales.jsx";
 import Installments from "./pages/Installments.jsx";
 import Partners from "./pages/Partners.jsx";
 import Reports from "./pages/Reports.jsx";
+import Finance from "./pages/Finance.jsx";
 
 const Placeholder = ({ title }) => (
   <div>
@@ -43,6 +44,7 @@ function App() {
             <Route path="installments" element={<Installments />} />
             <Route path="partners" element={<Partners />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="finance" element={<Finance />} />
           </Route>
         </Routes>
       </BrowserRouter>
