@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# env files
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# builds
+dist/
+frontend/dist/
+build/
+frontend/build/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# prisma
+backend/prisma/dev.db
+backend/prisma/dev.db-journal
+*.db
+*.db-journal
+
+# uploads/temp
+uploads/
+tmp/
+temp/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# cache
+.cache/
+.parcel-cache/
