@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 
 const emptyForm = {
@@ -30,12 +30,22 @@ const emptyForm = {
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const [filters, setFilters] = useState({
+    search: "",
+    customerType: "",
+    riskStatus: "",
+  });
+
   const loadCustomers = async () => {
     setLoading(true);
+    setError("");
+
     try {
       const res = await api.get("/customers");
       setCustomers(res.data);
@@ -50,22 +60,97 @@ const Customers = () => {
     loadCustomers();
   }, []);
 
+  const filteredCustomers = useMemo(() => {
+    return customers.filter((customer) => {
+      const text = `${customer.name || ""} ${customer.phone || ""} ${
+        customer.cnic || ""
+      } ${customer.fatherName || ""}`.toLowerCase();
+
+      const matchesSearch = text.includes(filters.search.toLowerCase());
+
+      const matchesType =
+        !filters.customerType ||
+        customer.customerType === filters.customerType;
+
+      const matchesRisk =
+        !filters.riskStatus || customer.riskStatus === filters.riskStatus;
+
+      return matchesSearch && matchesType && matchesRisk;
+    });
+  }, [customers, filters]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((old) => ({ ...old, [name]: value }));
   };
 
-  const createCustomer = async (e) => {
+  const submitCustomer = async (e) => {
     e.preventDefault();
     setError("");
 
     try {
-      await api.post("/customers", form);
+      if (editingId) {
+        await api.put(`/customers/${editingId}`, form);
+      } else {
+        await api.post("/customers", form);
+      }
+
       setForm(emptyForm);
+      setEditingId(null);
       setFormOpen(false);
       loadCustomers();
     } catch (err) {
-      setError(err.response?.data?.message || "Create customer failed");
+      setError(err.response?.data?.message || "Save customer failed");
+    }
+  };
+
+  const startEdit = (customer) => {
+    setEditingId(customer.id);
+    setForm({
+      name: customer.name || "",
+      fatherName: customer.fatherName || "",
+      cnic: customer.cnic || "",
+      phone: customer.phone || "",
+      alternatePhone: customer.alternatePhone || "",
+      address: customer.address || "",
+      jobOrBusiness: customer.jobOrBusiness || "",
+      monthlyIncome: customer.monthlyIncome || 0,
+
+      customerType: customer.customerType || "cash",
+
+      reference1Name: customer.reference1Name || "",
+      reference1Phone: customer.reference1Phone || "",
+      reference1Cnic: customer.reference1Cnic || "",
+
+      reference2Name: customer.reference2Name || "",
+      reference2Phone: customer.reference2Phone || "",
+      reference2Cnic: customer.reference2Cnic || "",
+
+      chequeNumber: customer.chequeNumber || "",
+
+      riskStatus: customer.riskStatus || "normal",
+      notes: customer.notes || "",
+    });
+
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm(emptyForm);
+    setFormOpen(false);
+  };
+
+  const deleteCustomer = async (id) => {
+    const ok = window.confirm("Delete this customer?");
+    if (!ok) return;
+
+    try {
+      await api.delete(`/customers/${id}`);
+      loadCustomers();
+    } catch (err) {
+      setError(err.response?.data?.message || "Delete customer failed");
     }
   };
 
@@ -82,11 +167,85 @@ const Customers = () => {
         </div>
 
         <button
-          onClick={() => setFormOpen(!formOpen)}
+          onClick={() => {
+            setFormOpen(!formOpen);
+            setEditingId(null);
+            setForm(emptyForm);
+          }}
           className="bg-yellow-500 text-black font-bold px-5 py-3 rounded-xl w-full sm:w-auto"
         >
           {formOpen ? "Close" : "+ Add Customer"}
         </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <Card title="Total Customers" value={customers.length} />
+        <Card
+          title="Installment"
+          value={customers.filter((c) => c.customerType === "installment").length}
+        />
+        <Card
+          title="Risky"
+          value={customers.filter((c) => c.riskStatus === "risky").length}
+        />
+        <Card
+          title="Blacklisted"
+          value={customers.filter((c) => c.riskStatus === "blacklisted").length}
+        />
+      </div>
+
+      <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-5 mb-6">
+        <h2 className="text-lg font-bold text-yellow-400 mb-4">Filters</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            className="px-4 py-3 rounded-xl bg-white"
+            placeholder="Search name, phone, CNIC..."
+            value={filters.search}
+            onChange={(e) =>
+              setFilters({ ...filters, search: e.target.value })
+            }
+          />
+
+          <select
+            className="px-4 py-3 rounded-xl bg-white"
+            value={filters.customerType}
+            onChange={(e) =>
+              setFilters({ ...filters, customerType: e.target.value })
+            }
+          >
+            <option value="">All Types</option>
+            <option value="cash">Cash</option>
+            <option value="installment">Installment</option>
+          </select>
+
+          <select
+            className="px-4 py-3 rounded-xl bg-white"
+            value={filters.riskStatus}
+            onChange={(e) =>
+              setFilters({ ...filters, riskStatus: e.target.value })
+            }
+          >
+            <option value="">All Risk</option>
+            <option value="good">Good</option>
+            <option value="normal">Normal</option>
+            <option value="risky">Risky</option>
+            <option value="blacklisted">Blacklisted</option>
+          </select>
+
+          <button
+            onClick={() =>
+              setFilters({
+                search: "",
+                customerType: "",
+                riskStatus: "",
+              })
+            }
+            className="bg-gray-700 text-white font-bold rounded-xl py-3"
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -97,11 +256,11 @@ const Customers = () => {
 
       {formOpen && (
         <form
-          onSubmit={createCustomer}
+          onSubmit={submitCustomer}
           className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-6 mb-6"
         >
           <h2 className="text-xl font-bold text-yellow-400 mb-4">
-            Customer Details
+            {editingId ? "Edit Customer" : "Add Customer"}
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -262,6 +421,22 @@ const Customers = () => {
             </>
           )}
 
+          {form.customerType === "cash" && (
+            <div className="mt-4">
+              <select
+                name="riskStatus"
+                className="px-4 py-3 rounded-xl bg-white w-full"
+                value={form.riskStatus}
+                onChange={handleChange}
+              >
+                <option value="good">Good</option>
+                <option value="normal">Normal</option>
+                <option value="risky">Risky</option>
+                <option value="blacklisted">Blacklisted</option>
+              </select>
+            </div>
+          )}
+
           <textarea
             name="notes"
             className="px-4 py-3 rounded-xl bg-white w-full mt-4"
@@ -271,9 +446,25 @@ const Customers = () => {
             rows="3"
           />
 
-          <button className="mt-5 w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl">
-            Save Customer
-          </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-5">
+            {editingId && (
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="bg-gray-700 text-white font-bold py-3 rounded-xl"
+              >
+                Cancel Edit
+              </button>
+            )}
+
+            <button
+              className={`bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl ${
+                editingId ? "" : "md:col-span-2"
+              }`}
+            >
+              {editingId ? "Update Customer" : "Save Customer"}
+            </button>
+          </div>
         </form>
       )}
 
@@ -281,7 +472,7 @@ const Customers = () => {
         <p className="text-yellow-400">Loading customers...</p>
       ) : (
         <>
-          <div className="hidden md:block bg-black/70 border border-yellow-600/30 rounded-2xl overflow-hidden">
+          <div className="hidden lg:block bg-black/70 border border-yellow-600/30 rounded-2xl overflow-hidden">
             <table className="w-full">
               <thead className="bg-yellow-500 text-black">
                 <tr>
@@ -291,19 +482,22 @@ const Customers = () => {
                   <th className="p-3 text-left">Type</th>
                   <th className="p-3 text-left">Risk</th>
                   <th className="p-3 text-left">Cheque</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
 
               <tbody>
-                {customers.map((customer) => (
+                {filteredCustomers.map((customer) => (
                   <tr
                     key={customer.id}
                     className="border-t border-yellow-600/20 text-gray-200"
                   >
                     <td className="p-3">
-                      <div className="font-semibold">{customer.name}</div>
+                      <div className="font-semibold text-yellow-300">
+                        {customer.name}
+                      </div>
                       <div className="text-xs text-gray-400">
-                        {customer.fatherName}
+                        {customer.fatherName || "-"}
                       </div>
                     </td>
                     <td className="p-3">{customer.phone}</td>
@@ -311,14 +505,29 @@ const Customers = () => {
                     <td className="p-3 capitalize">{customer.customerType}</td>
                     <td className="p-3 capitalize">{customer.riskStatus}</td>
                     <td className="p-3">{customer.chequeNumber || "-"}</td>
+                    <td className="p-3 text-right">
+                      <button
+                        onClick={() => startEdit(customer)}
+                        className="bg-yellow-500 text-black px-3 py-2 rounded-lg font-bold mr-2"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        onClick={() => deleteCustomer(customer.id)}
+                        className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold"
+                      >
+                        Delete
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div className="md:hidden space-y-4">
-            {customers.map((customer) => (
+          <div className="lg:hidden space-y-4">
+            {filteredCustomers.map((customer) => (
               <div
                 key={customer.id}
                 className="bg-black/75 border border-yellow-600/30 rounded-2xl p-4"
@@ -328,9 +537,7 @@ const Customers = () => {
                     <h3 className="font-bold text-yellow-400">
                       {customer.name}
                     </h3>
-                    <p className="text-sm text-gray-400">
-                      {customer.phone}
-                    </p>
+                    <p className="text-sm text-gray-400">{customer.phone}</p>
                   </div>
 
                   <span className="h-fit px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 text-xs capitalize">
@@ -339,25 +546,10 @@ const Customers = () => {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-gray-500">CNIC</p>
-                    <p>{customer.cnic || "-"}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Risk</p>
-                    <p className="capitalize">{customer.riskStatus}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Father</p>
-                    <p>{customer.fatherName || "-"}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Cheque</p>
-                    <p>{customer.chequeNumber || "-"}</p>
-                  </div>
+                  <Info label="CNIC" value={customer.cnic || "-"} />
+                  <Info label="Risk" value={customer.riskStatus || "-"} />
+                  <Info label="Father" value={customer.fatherName || "-"} />
+                  <Info label="Cheque" value={customer.chequeNumber || "-"} />
                 </div>
 
                 {customer.customerType === "installment" && (
@@ -375,6 +567,22 @@ const Customers = () => {
                     </p>
                   </div>
                 )}
+
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <button
+                    onClick={() => startEdit(customer)}
+                    className="bg-yellow-500 text-black py-3 rounded-xl font-bold"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    onClick={() => deleteCustomer(customer.id)}
+                    className="bg-red-600 text-white py-3 rounded-xl font-bold"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -383,5 +591,19 @@ const Customers = () => {
     </div>
   );
 };
+
+const Card = ({ title, value }) => (
+  <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4">
+    <p className="text-gray-400 text-xs">{title}</p>
+    <h2 className="text-xl md:text-2xl font-bold text-yellow-400">{value}</h2>
+  </div>
+);
+
+const Info = ({ label, value }) => (
+  <div>
+    <p className="text-gray-500 text-xs">{label}</p>
+    <p className="text-gray-200 font-semibold capitalize">{value}</p>
+  </div>
+);
 
 export default Customers;

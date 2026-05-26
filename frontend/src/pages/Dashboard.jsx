@@ -10,7 +10,6 @@ import {
   PackageX,
   RefreshCcw,
   TrendingUp,
-  Users,
   Wallet,
 } from "lucide-react";
 import {
@@ -42,7 +41,6 @@ const Dashboard = () => {
 
   const loadDashboard = async () => {
     setLoading(true);
-
     try {
       const [statsRes, salesRes, productsRes, overdueRes] = await Promise.all([
         api.get("/dashboard/stats"),
@@ -75,9 +73,7 @@ const Dashboard = () => {
         day: "numeric",
       });
 
-      if (!map[date]) {
-        map[date] = { date, cash: 0, installment: 0 };
-      }
+      if (!map[date]) map[date] = { date, cash: 0, installment: 0 };
 
       if (sale.saleType === "cash") {
         map[date].cash += Number(sale.finalAmount || 0);
@@ -185,8 +181,8 @@ const Dashboard = () => {
 
         <MainCard
           icon={HandCoins}
-          title="Total Profit"
-          value={formatMoney(stats.sales?.totalProfit)}
+          title="Net Profit After Expenses"
+          value={formatMoney(stats.finance?.netProfitAfterExpenses)}
           glow="green"
         />
       </motion.div>
@@ -300,6 +296,13 @@ const Dashboard = () => {
           icon={CreditCard}
           title="Donation Paid"
           value={formatMoney(stats.finance?.donationPaid)}
+          danger
+        />
+        <MiniCard
+          icon={CreditCard}
+          title="Total Expenses"
+          value={formatMoney(stats.finance?.totalExpenses)}
+          danger
         />
         <MiniCard
           icon={ArrowUpRight}
@@ -310,12 +313,6 @@ const Dashboard = () => {
           icon={HandCoins}
           title="Profit Pending"
           value={formatMoney(stats.sales?.profitPending)}
-          danger
-        />
-        <MiniCard
-          icon={CalendarClock}
-          title="Overdue Amount"
-          value={formatMoney(stats.installments?.overdueAmount)}
           danger
         />
       </motion.div>
@@ -400,9 +397,9 @@ const Dashboard = () => {
         />
 
         <GlowBox
-          icon={Wallet}
-          title="Available Capital"
-          value={formatMoney(stats.finance?.availableCapital)}
+          icon={CalendarClock}
+          title="Overdue Amount"
+          value={formatMoney(stats.installments?.overdueAmount)}
           color="purple"
         />
       </div>

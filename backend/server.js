@@ -15,6 +15,8 @@ const partnerRoutes = require("./routes/partnerRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const financeRoutes = require("./routes/financeRoutes");
+const expenseRoutes = require("./routes/expenseRoutes");
+const activityRoutes = require("./routes/activityRoutes");
 
 require("./models");
 
@@ -38,6 +40,8 @@ app.use("/api/partners", partnerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/finance", financeRoutes);
+app.use("/api/expenses", expenseRoutes);
+app.use("/api/activity-logs", activityRoutes);
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, async () => {

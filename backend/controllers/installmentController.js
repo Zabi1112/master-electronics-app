@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const { sequelize } = require("../config/db");
+const logActivity = require("../utils/activityLogger");
 
 const {
   Sale,
@@ -170,6 +171,24 @@ exports.payInstallment = async (req, res) => {
     await sale.save({ transaction: t });
 
     await t.commit();
+
+    await logActivity({
+      req,
+      action: "pay",
+      module: "installments",
+      recordId: installment.id,
+      description: `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow}`,
+      newData: {
+        installment: installment.toJSON(),
+        sale: sale.toJSON(),
+        payment: {
+          amount: payAmount,
+          installmentPaid: installmentPaidNow,
+          finePaid: finePaidNow,
+          fineDiscount: discountFine,
+        },
+      },
+    });
 
     res.json({
       message: "Installment payment received successfully",

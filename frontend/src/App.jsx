@@ -13,7 +13,8 @@ import Installments from "./pages/Installments.jsx";
 import Partners from "./pages/Partners.jsx";
 import Reports from "./pages/Reports.jsx";
 import Finance from "./pages/Finance.jsx";
-
+import Expenses from "./pages/Expenses.jsx";
+import ActivityLogs from "./pages/ActivityLogs.jsx";
 const Placeholder = ({ title }) => (
   <div>
     <h1 className="text-3xl font-bold text-yellow-400">{title}</h1>
@@ -45,6 +46,8 @@ function App() {
             <Route path="partners" element={<Partners />} />
             <Route path="reports" element={<Reports />} />
             <Route path="finance" element={<Finance />} />
+            <Route path="expenses" element={<Expenses />} />
+            <Route path="history" element={<ActivityLogs />} />
           </Route>
         </Routes>
       </BrowserRouter>

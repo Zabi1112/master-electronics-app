@@ -3,21 +3,28 @@ import api from "../api/api";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
+const getPreviousMonth = () => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
 const Finance = () => {
   const [settings, setSettings] = useState(null);
   const [donation, setDonation] = useState(null);
   const [records, setRecords] = useState([]);
   const [shares, setShares] = useState(null);
+  const [month, setMonth] = useState(getPreviousMonth());
   const [error, setError] = useState("");
 
-  const loadFinance = async () => {
+  const loadFinance = async (targetMonth = month) => {
     try {
       const [settingsRes, donationRes, recordsRes, sharesRes] =
         await Promise.all([
           api.get("/finance/settings"),
-          api.get("/finance/donation/current"),
+          api.get(`/finance/donation/current?month=${targetMonth}`),
           api.get("/finance/donation/records"),
-          api.get("/finance/partners/profit-shares"),
+          api.get(`/finance/partners/profit-shares?month=${targetMonth}`),
         ]);
 
       setSettings(settingsRes.data);
@@ -30,14 +37,15 @@ const Finance = () => {
   };
 
   useEffect(() => {
-    loadFinance();
+    loadFinance(month);
   }, []);
 
   const updateSettings = async (e) => {
     e.preventDefault();
+
     try {
       await api.put("/finance/settings", settings);
-      loadFinance();
+      loadFinance(month);
     } catch (err) {
       setError(err.response?.data?.message || "Settings update failed");
     }
@@ -47,9 +55,10 @@ const Finance = () => {
     try {
       await api.put("/finance/donation/mark-paid", {
         month: donation.month,
-        notes: "Donation marked as paid",
+        notes: `Donation marked as paid for ${donation.month}`,
       });
-      loadFinance();
+
+      loadFinance(month);
     } catch (err) {
       setError(err.response?.data?.message || "Mark donation failed");
     }
@@ -66,7 +75,7 @@ const Finance = () => {
       </h1>
 
       <p className="text-gray-400 text-sm mb-6">
-        Manage donation percentage and automatic partner profit calculation.
+        Monthly donation, expenses, net profit, and automatic partner profit sharing.
       </p>
 
       {error && (
@@ -74,6 +83,32 @@ const Finance = () => {
           {error}
         </div>
       )}
+
+      <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 mb-6">
+        <h2 className="text-lg font-bold text-yellow-400 mb-3">
+          Month Settlement
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            type="month"
+            className="px-4 py-3 rounded-xl bg-white"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+          />
+
+          <button
+            onClick={() => loadFinance(month)}
+            className="bg-yellow-500 text-black font-bold rounded-xl py-3 md:col-span-2"
+          >
+            Load Selected Month
+          </button>
+        </div>
+
+        <p className="text-xs text-gray-400 mt-3">
+          By default, system shows previous month settlement. Example: if current month is May, donation due is for April.
+        </p>
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <form
@@ -134,11 +169,13 @@ const Finance = () => {
             Donation Due
           </h2>
 
-          <Mini title="Month" value={donation?.month} />
-          <Mini title="Gross Profit" value={`Rs. ${money(shares?.grossProfit)}`} />
-          <Mini title="Donation %" value={`${shares?.donationPercentage || 0}%`} />
-          <Mini title="Donation Deduction" value={`Rs. ${money(shares?.donationAmount)}`} />
-          <Mini title="Net Profit" value={`Rs. ${money(shares?.netProfitAfterDonation)}`} />
+          <Mini title="Settlement Month" value={donation?.month} />
+          <Mini title="Gross Profit" value={`Rs. ${money(donation?.grossProfit)}`} />
+          <Mini title="Monthly Expenses" value={`Rs. ${money(donation?.monthlyExpenses)}`} />
+          <Mini title="Profit Before Donation" value={`Rs. ${money(donation?.profitBeforeDonation)}`} />
+          <Mini title="Donation %" value={`${donation?.donationPercentage || 0}%`} />
+          <Mini title="Donation Amount" value={`Rs. ${money(donation?.donationAmount)}`} />
+          <Mini title="Net Profit After Donation" value={`Rs. ${money(donation?.netProfitAfterDonation)}`} />
 
           {donation?.isDue ? (
             <button
@@ -149,7 +186,7 @@ const Finance = () => {
             </button>
           ) : (
             <div className="mt-5 bg-green-600/20 text-green-300 rounded-xl p-3 text-center">
-              Donation is paid
+              Donation is paid for {donation?.month}
             </div>
           )}
         </div>
@@ -159,9 +196,11 @@ const Finance = () => {
             Partner Profit Summary
           </h2>
 
-          <Mini title="Month" value={shares?.month} />
+          <Mini title="Settlement Month" value={shares?.month} />
           <Mini title="Method" value={shares?.method} />
           <Mini title="Gross Profit" value={`Rs. ${money(shares?.grossProfit)}`} />
+          <Mini title="Monthly Expenses" value={`Rs. ${money(shares?.monthlyExpenses)}`} />
+          <Mini title="Profit Before Donation" value={`Rs. ${money(shares?.profitBeforeDonation)}`} />
           <Mini title="Donation Deducted" value={`Rs. ${money(shares?.donationAmount)}`} />
           <Mini title="Net Profit To Divide" value={`Rs. ${money(shares?.netProfitAfterDonation)}`} />
         </div>
@@ -170,7 +209,7 @@ const Finance = () => {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-6">
         <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-5">
           <h2 className="text-xl font-bold text-yellow-400 mb-4">
-            Auto Partner Share Breakdown
+            Partner Share Breakdown
           </h2>
 
           <div className="space-y-3">
@@ -192,13 +231,38 @@ const Finance = () => {
 
                   <div className="text-right">
                     <p className="text-yellow-300 font-bold">
-                      Profit: Rs. {money(s.profitShare)}
+                      This Month: Rs. {money(s.monthlyProfitShare)}
+                    </p>
+                    <p className="text-blue-300 text-sm">
+                      Total Profit: Rs. {money(s.totalProfitShare)}
                     </p>
                     <p className="text-green-300 text-sm">
                       Balance: Rs. {money(s.calculatedBalance)}
                     </p>
                   </div>
                 </div>
+
+                {s.monthlyProfitHistory?.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-yellow-400 cursor-pointer text-sm">
+                      View Monthly Profit History
+                    </summary>
+
+                    <div className="mt-3 space-y-2">
+                      {s.monthlyProfitHistory.map((h) => (
+                        <div
+                          key={h.month}
+                          className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-black/40 border border-yellow-600/10 rounded-xl p-3 text-xs"
+                        >
+                          <span className="text-gray-400">{h.month}</span>
+                          <span>Profit: Rs. {money(h.profitShare)}</span>
+                          <span>Donation: Rs. {money(h.donation)}</span>
+                          <span>Net: Rs. {money(h.netProfit)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
               </div>
             ))}
 
@@ -267,7 +331,7 @@ const Finance = () => {
 const Mini = ({ title, value }) => (
   <div className="bg-black/50 border border-yellow-600/20 rounded-xl p-3 mb-3">
     <p className="text-gray-500 text-xs">{title}</p>
-    <h3 className="text-yellow-300 font-bold">{value || "-"}</h3>
+    <h3 className="text-yellow-300 font-bold capitalize">{value || "-"}</h3>
   </div>
 );
 

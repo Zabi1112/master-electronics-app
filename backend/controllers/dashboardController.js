@@ -1,9 +1,11 @@
 const { Op, fn, col } = require("sequelize");
+
 const Product = require("../models/Product");
 const Sale = require("../models/Sale");
 const Installment = require("../models/Installment");
 const Partner = require("../models/Partner");
 const DonationRecord = require("../models/DonationRecord");
+const Expense = require("../models/Expense");
 
 const sumField = async (Model, field, where = {}) => {
   const result = await Model.findOne({
@@ -48,6 +50,8 @@ exports.getDashboardStats = async (req, res) => {
       status: "paid",
     });
 
+    const totalExpenses = await sumField(Expense, "amount");
+
     const totalSales = await sumField(Sale, "finalAmount");
     const cashSales = await sumField(Sale, "finalAmount", { saleType: "cash" });
     const installmentSales = await sumField(Sale, "finalAmount", {
@@ -59,12 +63,18 @@ exports.getDashboardStats = async (req, res) => {
     const profitRecovered = await sumField(Sale, "profitRecovered");
     const profitPending = await sumField(Sale, "profitPending");
 
+    const netProfitAfterExpenses =
+      Number(profitRecovered || 0) -
+      Number(totalDonationPaid || 0) -
+      Number(totalExpenses || 0);
+
     const availableCapital =
       Number(totalPartnerInvestment || 0) -
       Number(totalPartnerWithdrawals || 0) -
       Number(totalInventoryPurchased || 0) +
       Number(totalRegained || 0) -
-      Number(totalDonationPaid || 0);
+      Number(totalDonationPaid || 0) -
+      Number(totalExpenses || 0);
 
     const amountCirclingInstallments = await sumField(Sale, "remainingAmount", {
       saleType: "installment",
@@ -89,10 +99,14 @@ exports.getDashboardStats = async (req, res) => {
     );
 
     const totalProducts = await Product.count();
+
     const inStockProducts = await Product.count({
       where: { status: "in_stock" },
     });
-    const soldProducts = await Product.count({ where: { status: "sold" } });
+
+    const soldProducts = await Product.count({
+      where: { status: "sold" },
+    });
 
     const activeInstallmentSales = await Sale.count({
       where: { saleType: "installment", status: "active" },
@@ -114,9 +128,11 @@ exports.getDashboardStats = async (req, res) => {
         totalCapital: totalPartnerInvestment,
         partnerWithdrawals: totalPartnerWithdrawals,
         donationPaid: totalDonationPaid,
+        totalExpenses,
         inventoryPurchased: totalInventoryPurchased,
         availableCapital,
         totalRegained,
+        netProfitAfterExpenses,
       },
 
       sales: {

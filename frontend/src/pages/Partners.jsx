@@ -9,6 +9,7 @@ const emptyPartner = {
   cnic: "",
   address: "",
   notes: "",
+  status: "active",
 };
 
 const emptyTransaction = {
@@ -25,32 +26,41 @@ const transactionTypes = [
   { value: "adjustment", label: "Adjustment" },
 ];
 
+const getPreviousMonth = () => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
 const Partners = () => {
   const [partners, setPartners] = useState([]);
   const [profitShares, setProfitShares] = useState(null);
   const [selectedPartner, setSelectedPartner] = useState(null);
   const [partnerDetails, setPartnerDetails] = useState(null);
 
+  const [partnerForm, setPartnerForm] = useState(emptyPartner);
+  const [editingId, setEditingId] = useState(null);
+  const [transactionForm, setTransactionForm] = useState(emptyTransaction);
+
+  const [month, setMonth] = useState(getPreviousMonth());
   const [formOpen, setFormOpen] = useState(false);
   const [transactionOpen, setTransactionOpen] = useState(false);
 
-  const [partnerForm, setPartnerForm] = useState(emptyPartner);
-  const [transactionForm, setTransactionForm] = useState(emptyTransaction);
-
+  const [filters, setFilters] = useState({ search: "", status: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const loadPartners = async () => {
+  const loadPartners = async (targetMonth = month) => {
     setLoading(true);
     setError("");
 
     try {
       const [partnersRes, sharesRes] = await Promise.all([
         api.get("/partners"),
-        api.get("/finance/partners/profit-shares"),
+        api.get(`/finance/partners/profit-shares?month=${targetMonth}`),
       ]);
 
-      setPartners(partnersRes.data);
+      setPartners(partnersRes.data || []);
       setProfitShares(sharesRes.data);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load partners");
@@ -69,37 +79,48 @@ const Partners = () => {
   };
 
   useEffect(() => {
-    loadPartners();
+    loadPartners(month);
   }, []);
 
-  const getShare = (partnerId) => {
-    return profitShares?.shares?.find(
+  const getShare = (partnerId) =>
+    profitShares?.shares?.find(
       (s) => String(s.partnerId) === String(partnerId)
     );
-  };
 
-  const partnersWithCalculatedBalance = useMemo(() => {
+  const partnersWithBalance = useMemo(() => {
     return partners.map((partner) => {
       const share = getShare(partner.id);
 
       return {
         ...partner,
-        autoProfitShare: Number(share?.profitShare || 0),
+        monthlyProfitShare: Number(share?.monthlyProfitShare || 0),
+        totalProfitShare: Number(share?.totalProfitShare || 0),
         calculatedBalance:
           share?.calculatedBalance !== undefined
             ? Number(share.calculatedBalance || 0)
             : Number(partner.currentBalance || 0),
         sharePercentage: Number(share?.percentage || 0),
+        monthlyProfitHistory: share?.monthlyProfitHistory || [],
       };
     });
   }, [partners, profitShares]);
 
+  const filteredPartners = useMemo(() => {
+    return partnersWithBalance.filter((p) => {
+      const text = `${p.name || ""} ${p.phone || ""} ${p.cnic || ""}`.toLowerCase();
+      const matchesSearch = text.includes(filters.search.toLowerCase());
+      const matchesStatus = !filters.status || p.status === filters.status;
+      return matchesSearch && matchesStatus;
+    });
+  }, [partnersWithBalance, filters]);
+
   const summary = useMemo(() => {
-    return partnersWithCalculatedBalance.reduce(
+    return partnersWithBalance.reduce(
       (acc, p) => {
         acc.totalInvested += Number(p.totalInvested || 0);
         acc.totalWithdrawn += Number(p.totalWithdrawn || 0);
-        acc.autoProfitShare += Number(p.autoProfitShare || 0);
+        acc.monthlyProfitShare += Number(p.monthlyProfitShare || 0);
+        acc.totalProfitShare += Number(p.totalProfitShare || 0);
         acc.lossShare += Number(p.lossShare || 0);
         acc.calculatedBalance += Number(p.calculatedBalance || 0);
         return acc;
@@ -107,24 +128,69 @@ const Partners = () => {
       {
         totalInvested: 0,
         totalWithdrawn: 0,
-        autoProfitShare: 0,
+        monthlyProfitShare: 0,
+        totalProfitShare: 0,
         lossShare: 0,
         calculatedBalance: 0,
       }
     );
-  }, [partnersWithCalculatedBalance]);
+  }, [partnersWithBalance]);
 
-  const createPartner = async (e) => {
+  const submitPartner = async (e) => {
     e.preventDefault();
     setError("");
 
     try {
-      await api.post("/partners", partnerForm);
+      if (editingId) {
+        await api.put(`/partners/${editingId}`, partnerForm);
+      } else {
+        await api.post("/partners", partnerForm);
+      }
+
       setPartnerForm(emptyPartner);
+      setEditingId(null);
       setFormOpen(false);
-      loadPartners();
+      await loadPartners(month);
     } catch (err) {
-      setError(err.response?.data?.message || "Create partner failed");
+      setError(err.response?.data?.message || "Save partner failed");
+    }
+  };
+
+  const startEdit = (partner) => {
+    setEditingId(partner.id);
+    setPartnerForm({
+      name: partner.name || "",
+      phone: partner.phone || "",
+      cnic: partner.cnic || "",
+      address: partner.address || "",
+      notes: partner.notes || "",
+      status: partner.status || "active",
+    });
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setPartnerForm(emptyPartner);
+    setFormOpen(false);
+  };
+
+  const deletePartner = async (partner) => {
+    const ok = window.confirm(`Delete partner ${partner.name}?`);
+    if (!ok) return;
+
+    try {
+      await api.delete(`/partners/${partner.id}`);
+
+      if (selectedPartner?.id === partner.id) {
+        setSelectedPartner(null);
+        setPartnerDetails(null);
+      }
+
+      loadPartners(month);
+    } catch (err) {
+      setError(err.response?.data?.message || "Delete partner failed");
     }
   };
 
@@ -151,7 +217,7 @@ const Partners = () => {
       setTransactionOpen(false);
 
       await loadPartnerDetails(selectedPartner.id);
-      await loadPartners();
+      await loadPartners(month);
     } catch (err) {
       setError(err.response?.data?.message || "Add transaction failed");
     }
@@ -166,7 +232,7 @@ const Partners = () => {
   };
 
   const selectedCalculated = selectedPartner
-    ? partnersWithCalculatedBalance.find(
+    ? partnersWithBalance.find(
         (p) => String(p.id) === String(selectedPartner.id)
       )
     : null;
@@ -179,41 +245,118 @@ const Partners = () => {
             Partners
           </h1>
           <p className="text-gray-400 text-sm">
-            Partner investment, withdrawals, auto profit share, and calculated balance.
+            Investment, withdrawals, monthly profit share and total calculated balance.
           </p>
         </div>
 
         <button
-          onClick={() => setFormOpen(!formOpen)}
+          onClick={() => {
+            setFormOpen(!formOpen);
+            setEditingId(null);
+            setPartnerForm(emptyPartner);
+          }}
           className="bg-yellow-500 text-black font-bold px-5 py-3 rounded-xl w-full sm:w-auto"
         >
           {formOpen ? "Close" : "+ Add Partner"}
         </button>
       </div>
 
-      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 md:gap-5 mb-6">
+      <div className="grid grid-cols-2 xl:grid-cols-6 gap-3 md:gap-5 mb-6">
         <SummaryCard title="Invested" value={summary.totalInvested} />
         <SummaryCard title="Withdrawn" value={summary.totalWithdrawn} />
-        <SummaryCard title="Auto Profit" value={summary.autoProfitShare} />
+        <SummaryCard title="This Month Profit" value={summary.monthlyProfitShare} />
+        <SummaryCard title="Total Profit" value={summary.totalProfitShare} />
         <SummaryCard title="Loss" value={summary.lossShare} />
-        <SummaryCard title="Calculated Balance" value={summary.calculatedBalance} />
+        <SummaryCard title="Balance" value={summary.calculatedBalance} />
+      </div>
+
+      <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 mb-6">
+        <h2 className="text-lg font-bold text-yellow-400 mb-3">
+          Profit Month
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            type="month"
+            className="px-4 py-3 rounded-xl bg-white"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+          />
+
+          <button
+            onClick={() => loadPartners(month)}
+            className="bg-yellow-500 text-black font-bold rounded-xl py-3 md:col-span-2"
+          >
+            Load Selected Month
+          </button>
+        </div>
       </div>
 
       {profitShares && (
         <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 mb-6">
           <h2 className="text-lg font-bold text-yellow-400 mb-3">
-            Profit Distribution
+            Profit Distribution — {profitShares.month}
           </h2>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-            <MiniInfo title="Month" value={profitShares.month} />
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
             <MiniInfo title="Method" value={profitShares.method} />
-            <MiniInfo title="Gross Profit" value={`Rs. ${money(profitShares.grossProfit)}`} />
-            <MiniInfo title="Donation Deducted" value={`Rs. ${money(profitShares.donationAmount)}`} />
-            <MiniInfo title="Net Profit" value={`Rs. ${money(profitShares.netProfitAfterDonation)}`} />
+            <MiniInfo
+              title="Gross Profit"
+              value={`Rs. ${money(profitShares.grossProfit)}`}
+            />
+            <MiniInfo
+              title="Expenses"
+              value={`Rs. ${money(profitShares.monthlyExpenses)}`}
+            />
+            <MiniInfo
+              title="Before Donation"
+              value={`Rs. ${money(profitShares.profitBeforeDonation)}`}
+            />
+            <MiniInfo
+              title="Donation"
+              value={`Rs. ${money(profitShares.donationAmount)}`}
+            />
+            <MiniInfo
+              title="Net Profit"
+              value={`Rs. ${money(profitShares.netProfitAfterDonation)}`}
+            />
           </div>
         </div>
       )}
+
+      <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-5 mb-6">
+        <h2 className="text-lg font-bold text-yellow-400 mb-4">Filters</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            className="px-4 py-3 rounded-xl bg-white"
+            placeholder="Search name, phone, CNIC..."
+            value={filters.search}
+            onChange={(e) =>
+              setFilters({ ...filters, search: e.target.value })
+            }
+          />
+
+          <select
+            className="px-4 py-3 rounded-xl bg-white"
+            value={filters.status}
+            onChange={(e) =>
+              setFilters({ ...filters, status: e.target.value })
+            }
+          >
+            <option value="">All Status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+
+          <button
+            onClick={() => setFilters({ search: "", status: "" })}
+            className="bg-gray-700 text-white font-bold rounded-xl py-3"
+          >
+            Reset
+          </button>
+        </div>
+      </div>
 
       {error && (
         <div className="bg-red-600/20 border border-red-500/40 text-red-300 rounded-xl p-3 mb-4">
@@ -223,11 +366,11 @@ const Partners = () => {
 
       {formOpen && (
         <form
-          onSubmit={createPartner}
+          onSubmit={submitPartner}
           className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-6 mb-6"
         >
           <h2 className="text-xl font-bold text-yellow-400 mb-4">
-            Partner Details
+            {editingId ? "Edit Partner" : "Add Partner"}
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -259,8 +402,19 @@ const Partners = () => {
               }
             />
 
-            <input
+            <select
               className="px-4 py-3 rounded-xl bg-white"
+              value={partnerForm.status}
+              onChange={(e) =>
+                setPartnerForm({ ...partnerForm, status: e.target.value })
+              }
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+
+            <input
+              className="px-4 py-3 rounded-xl bg-white md:col-span-2"
               placeholder="Address"
               value={partnerForm.address}
               onChange={(e) =>
@@ -279,9 +433,25 @@ const Partners = () => {
             />
           </div>
 
-          <button className="mt-5 w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl">
-            Save Partner
-          </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-5">
+            {editingId && (
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="bg-gray-700 text-white font-bold py-3 rounded-xl"
+              >
+                Cancel Edit
+              </button>
+            )}
+
+            <button
+              className={`bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl ${
+                editingId ? "" : "md:col-span-2"
+              }`}
+            >
+              {editingId ? "Update Partner" : "Save Partner"}
+            </button>
+          </div>
         </form>
       )}
 
@@ -295,7 +465,7 @@ const Partners = () => {
             <p className="text-yellow-400">Loading partners...</p>
           ) : (
             <div className="space-y-4">
-              {partnersWithCalculatedBalance.map((partner) => (
+              {filteredPartners.map((partner) => (
                 <div
                   key={partner.id}
                   onClick={() => openLedger(partner)}
@@ -315,7 +485,13 @@ const Partners = () => {
                       </p>
                     </div>
 
-                    <span className="h-fit px-3 py-1 rounded-full bg-green-600/20 text-green-300 text-xs capitalize">
+                    <span
+                      className={`h-fit px-3 py-1 rounded-full text-xs capitalize ${
+                        partner.status === "active"
+                          ? "bg-green-600/20 text-green-300"
+                          : "bg-red-600/20 text-red-300"
+                      }`}
+                    >
                       {partner.status}
                     </span>
                   </div>
@@ -323,15 +499,31 @@ const Partners = () => {
                   <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
                     <Info label="Invested" value={partner.totalInvested} />
                     <Info label="Withdrawn" value={partner.totalWithdrawn} />
-                    <Info label="Auto Profit" value={partner.autoProfitShare} />
+                    <Info label="Month Profit" value={partner.monthlyProfitShare} />
+                    <Info label="Total Profit" value={partner.totalProfitShare} />
                     <Info label="Balance" value={partner.calculatedBalance} />
+                    <Info label="Share %" value={`${partner.sharePercentage.toFixed(2)}%`} plain />
                   </div>
 
-                  <div className="mt-3 bg-yellow-500/10 rounded-xl p-3">
-                    <p className="text-xs text-gray-400">Share Percentage</p>
-                    <p className="text-yellow-300 font-bold">
-                      {partner.sharePercentage.toFixed(2)}%
-                    </p>
+                  <div className="grid grid-cols-2 gap-3 mt-4">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEdit(partner);
+                      }}
+                      className="bg-yellow-500 text-black py-3 rounded-xl font-bold"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deletePartner(partner);
+                      }}
+                      className="bg-red-600 text-white py-3 rounded-xl font-bold"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))}
@@ -347,7 +539,7 @@ const Partners = () => {
                 Select Partner
               </h2>
               <p className="text-gray-400 text-sm">
-                Tap a partner to view calculated balance and ledger.
+                Tap a partner to view monthly history and ledger.
               </p>
             </div>
           ) : (
@@ -372,13 +564,42 @@ const Partners = () => {
               </div>
 
               {selectedCalculated && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-                  <MiniStat title="Invested" value={selectedCalculated.totalInvested} />
-                  <MiniStat title="Withdrawn" value={selectedCalculated.totalWithdrawn} />
-                  <MiniStat title="Auto Profit" value={selectedCalculated.autoProfitShare} />
-                  <MiniStat title="Loss" value={selectedCalculated.lossShare} />
-                  <MiniStat title="Balance" value={selectedCalculated.calculatedBalance} />
-                </div>
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                    <MiniStat title="Invested" value={selectedCalculated.totalInvested} />
+                    <MiniStat title="Withdrawn" value={selectedCalculated.totalWithdrawn} />
+                    <MiniStat title="This Month" value={selectedCalculated.monthlyProfitShare} />
+                    <MiniStat title="Total Profit" value={selectedCalculated.totalProfitShare} />
+                    <MiniStat title="Balance" value={selectedCalculated.calculatedBalance} />
+                  </div>
+
+                  <div className="bg-black/60 border border-yellow-600/20 rounded-2xl p-4 mb-5">
+                    <h3 className="text-lg font-bold text-yellow-400 mb-3">
+                      Monthly Profit History
+                    </h3>
+
+                    {selectedCalculated.monthlyProfitHistory?.length ? (
+                      <div className="space-y-2">
+                        {selectedCalculated.monthlyProfitHistory.map((h) => (
+                          <div
+                            key={h.month}
+                            className="grid grid-cols-2 md:grid-cols-5 gap-2 bg-black/40 border border-yellow-600/10 rounded-xl p-3 text-xs text-gray-200"
+                          >
+                            <span className="text-yellow-300 font-bold">{h.month}</span>
+                            <span>Share: Rs. {money(h.profitShare)}</span>
+                            <span>Gross: Rs. {money(h.grossProfit)}</span>
+                            <span>Expenses: Rs. {money(h.expenses)}</span>
+                            <span>Donation: Rs. {money(h.donation)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-400 text-sm">
+                        No monthly profit history yet.
+                      </p>
+                    )}
+                  </div>
+                </>
               )}
 
               {transactionOpen && (
@@ -540,16 +761,16 @@ const MiniInfo = ({ title, value }) => (
 const MiniStat = ({ title, value }) => (
   <div className="bg-black/60 border border-yellow-600/20 rounded-xl p-3">
     <p className="text-gray-500 text-xs">{title}</p>
-    <h3 className="text-lg font-bold text-yellow-300">
-      Rs. {money(value)}
-    </h3>
+    <h3 className="text-lg font-bold text-yellow-300">Rs. {money(value)}</h3>
   </div>
 );
 
-const Info = ({ label, value }) => (
+const Info = ({ label, value, plain }) => (
   <div>
     <p className="text-gray-500 text-xs">{label}</p>
-    <p className="text-gray-200 font-semibold">Rs. {money(value)}</p>
+    <p className="text-gray-200 font-semibold">
+      {plain ? value : `Rs. ${money(value)}`}
+    </p>
   </div>
 );
 

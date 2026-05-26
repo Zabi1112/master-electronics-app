@@ -9,18 +9,22 @@ import {
   HandCoins,
   BarChart3,
   Settings,
+  ReceiptText,
   LogOut,
+  History,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 const navItems = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
   { label: "Users", path: "/users", icon: Users },
+  { label: "Expenses", path: "/expenses", icon: ReceiptText },
   { label: "Customers", path: "/customers", icon: UserRound },
   { label: "Inventory", path: "/inventory", icon: Package },
   { label: "Sales", path: "/sales", icon: ShoppingCart },
   { label: "Installments", path: "/installments", icon: CalendarClock },
   { label: "Partners", path: "/partners", icon: HandCoins },
+  { label: "History", path: "/history", icon: History },
   { label: "Reports", path: "/reports", icon: BarChart3 },
   { label: "Finance", path: "/finance", icon: Settings },
 ];

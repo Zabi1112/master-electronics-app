@@ -4,20 +4,27 @@ const {
   DonationRecord,
   Sale,
   Partner,
-  PartnerTransaction,
+  Expense,
   User,
 } = require("../models");
 
-const currentMonthKey = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+const monthKey = (date) => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 };
 
-const getMonthRange = (monthKey) => {
-  const [year, month] = monthKey.split("-").map(Number);
+const currentMonthKey = () => monthKey(new Date());
 
-  const start = new Date(year, month - 1, 1, 0, 0, 0);
-  const end = new Date(year, month, 0, 23, 59, 59);
+const previousMonthKey = () => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 1);
+  return monthKey(d);
+};
+
+const getMonthRange = (month) => {
+  const [year, monthNumber] = month.split("-").map(Number);
+
+  const start = new Date(year, monthNumber - 1, 1, 0, 0, 0);
+  const end = new Date(year, monthNumber, 0, 23, 59, 59);
 
   return { start, end };
 };
@@ -47,6 +54,168 @@ const getOrCreateSettings = async () => {
   return settings;
 };
 
+const getMonthlyFinance = async (month) => {
+  const settings = await getOrCreateSettings();
+  const { start, end } = getMonthRange(month);
+
+  const grossProfit = await sumField(Sale, "profitRecovered", {
+    createdAt: {
+      [Op.gte]: start,
+      [Op.lte]: end,
+    },
+  });
+
+  const monthlyExpenses = await sumField(Expense, "amount", {
+    expenseDate: {
+      [Op.gte]: start.toISOString().split("T")[0],
+      [Op.lte]: end.toISOString().split("T")[0],
+    },
+  });
+
+  const profitBeforeDonation = Math.max(
+    0,
+    Number(grossProfit || 0) - Number(monthlyExpenses || 0)
+  );
+
+  const donationAmount =
+    profitBeforeDonation * (Number(settings.donationPercentage || 0) / 100);
+
+  const netProfitAfterDonation = profitBeforeDonation - donationAmount;
+
+  return {
+    settings,
+    month,
+    grossProfit,
+    monthlyExpenses,
+    profitBeforeDonation,
+    donationPercentage: settings.donationPercentage,
+    donationAmount,
+    netProfitAfterDonation,
+  };
+};
+
+const calculateSharesForMonth = async (month) => {
+  const monthly = await getMonthlyFinance(month);
+
+  const partners = await Partner.findAll({
+    where: { status: "active" },
+  });
+
+  const totalInvestment = partners.reduce(
+    (sum, p) => sum + Number(p.totalInvested || 0),
+    0
+  );
+
+  const shares = partners.map((partner) => {
+    let percentage = 0;
+
+    if (monthly.settings.profitShareMethod === "equal") {
+      percentage = partners.length ? 100 / partners.length : 0;
+    } else {
+      percentage = totalInvestment
+        ? (Number(partner.totalInvested || 0) / totalInvestment) * 100
+        : 0;
+    }
+
+    const profitShare =
+      Number(monthly.netProfitAfterDonation || 0) * (percentage / 100);
+
+    return {
+      partnerId: partner.id,
+      partnerName: partner.name,
+      totalInvested: Number(partner.totalInvested || 0),
+      totalWithdrawn: Number(partner.totalWithdrawn || 0),
+      lossShare: Number(partner.lossShare || 0),
+      percentage,
+      profitShare,
+    };
+  });
+
+  return {
+    ...monthly,
+    method: monthly.settings.profitShareMethod,
+    totalInvestment,
+    shares,
+  };
+};
+
+const calculatePartnerAllTimeBalances = async (targetMonth) => {
+  const partners = await Partner.findAll({
+    where: { status: "active" },
+  });
+
+  const now = new Date();
+  const currentMonth = targetMonth || currentMonthKey();
+
+  const allSales = await Sale.findAll({
+    attributes: ["createdAt"],
+    raw: true,
+  });
+
+  const monthsSet = new Set();
+
+  allSales.forEach((sale) => {
+    const d = new Date(sale.createdAt);
+    const key = monthKey(d);
+    if (key <= currentMonth) monthsSet.add(key);
+  });
+
+  const months = [...monthsSet].sort();
+
+  const monthlySharesMap = {};
+
+  for (const month of months) {
+    const calc = await calculateSharesForMonth(month);
+
+    calc.shares.forEach((share) => {
+      if (!monthlySharesMap[share.partnerId]) {
+        monthlySharesMap[share.partnerId] = {
+          totalProfitShare: 0,
+          months: [],
+        };
+      }
+
+      monthlySharesMap[share.partnerId].totalProfitShare += Number(
+        share.profitShare || 0
+      );
+
+      monthlySharesMap[share.partnerId].months.push({
+        month,
+        profitShare: share.profitShare,
+        percentage: share.percentage,
+        grossProfit: calc.grossProfit,
+        expenses: calc.monthlyExpenses,
+        donation: calc.donationAmount,
+        netProfit: calc.netProfitAfterDonation,
+      });
+    });
+  }
+
+  return partners.map((partner) => {
+    const shareInfo = monthlySharesMap[partner.id] || {
+      totalProfitShare: 0,
+      months: [],
+    };
+
+    const calculatedBalance =
+      Number(partner.totalInvested || 0) +
+      Number(shareInfo.totalProfitShare || 0) -
+      Number(partner.totalWithdrawn || 0) -
+      Number(partner.lossShare || 0);
+
+    return {
+      partnerId: partner.id,
+      partnerName: partner.name,
+      totalInvested: Number(partner.totalInvested || 0),
+      totalWithdrawn: Number(partner.totalWithdrawn || 0),
+      lossShare: Number(partner.lossShare || 0),
+      totalProfitShare: shareInfo.totalProfitShare,
+      calculatedBalance,
+      monthlyProfitHistory: shareInfo.months,
+    };
+  });
+};
+
 exports.getSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings();
@@ -63,11 +232,8 @@ exports.updateSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings();
 
-    const {
-      profitShareMethod,
-      donationPercentage,
-      donationReminderEnabled,
-    } = req.body;
+    const { profitShareMethod, donationPercentage, donationReminderEnabled } =
+      req.body;
 
     await settings.update({
       profitShareMethod: profitShareMethod || settings.profitShareMethod,
@@ -95,30 +261,19 @@ exports.updateSettings = async (req, res) => {
 
 exports.getCurrentDonationDue = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings();
-    const month = req.query.month || currentMonthKey();
-    const { start, end } = getMonthRange(month);
-
-    const monthlyProfit = await sumField(Sale, "profitRecovered", {
-      createdAt: {
-        [Op.gte]: start,
-        [Op.lte]: end,
-      },
-    });
-
-    const donationAmount =
-      monthlyProfit * (Number(settings.donationPercentage || 0) / 100);
+    const month = req.query.month || previousMonthKey();
+    const monthly = await getMonthlyFinance(month);
 
     let record = await DonationRecord.findOne({
       where: { month },
     });
 
-    if (!record && settings.donationReminderEnabled) {
+    if (!record && monthly.settings.donationReminderEnabled) {
       record = await DonationRecord.create({
         month,
-        profitAmount: monthlyProfit,
-        donationPercentage: settings.donationPercentage,
-        donationAmount,
+        profitAmount: monthly.profitBeforeDonation,
+        donationPercentage: monthly.donationPercentage,
+        donationAmount: monthly.donationAmount,
         status: "due",
         createdBy: req.user.id,
       });
@@ -126,10 +281,13 @@ exports.getCurrentDonationDue = async (req, res) => {
 
     res.json({
       month,
-      monthlyProfit,
-      donationPercentage: settings.donationPercentage,
-      donationAmount,
-      reminderEnabled: settings.donationReminderEnabled,
+      grossProfit: monthly.grossProfit,
+      monthlyExpenses: monthly.monthlyExpenses,
+      profitBeforeDonation: monthly.profitBeforeDonation,
+      donationPercentage: monthly.donationPercentage,
+      donationAmount: monthly.donationAmount,
+      netProfitAfterDonation: monthly.netProfitAfterDonation,
+      reminderEnabled: monthly.settings.donationReminderEnabled,
       record,
       isDue: record?.status === "due",
     });
@@ -143,9 +301,7 @@ exports.getCurrentDonationDue = async (req, res) => {
 
 exports.markDonationPaid = async (req, res) => {
   try {
-    const { month, notes } = req.body;
-
-    const targetMonth = month || currentMonthKey();
+    const targetMonth = req.body.month || previousMonthKey();
 
     let record = await DonationRecord.findOne({
       where: { month: targetMonth },
@@ -160,7 +316,7 @@ exports.markDonationPaid = async (req, res) => {
     await record.update({
       status: "paid",
       paidDate: new Date().toISOString().split("T")[0],
-      notes: notes || record.notes,
+      notes: req.body.notes || record.notes,
       markedPaidBy: req.user.id,
     });
 
@@ -205,70 +361,34 @@ exports.getDonationRecords = async (req, res) => {
 
 exports.calculatePartnerProfitShares = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings();
-    const month = req.query.month || currentMonthKey();
-    const { start, end } = getMonthRange(month);
+    const month = req.query.month || previousMonthKey();
+    const monthCalculation = await calculateSharesForMonth(month);
+    const allTimeBalances = await calculatePartnerAllTimeBalances(month);
 
-    const monthlyProfit = await sumField(Sale, "profitRecovered", {
-      createdAt: {
-        [Op.gte]: start,
-        [Op.lte]: end,
-      },
-    });
-
-    const donationAmount =
-      monthlyProfit * (Number(settings.donationPercentage || 0) / 100);
-
-    const netProfitAfterDonation = monthlyProfit - donationAmount;
-
-    const partners = await Partner.findAll({
-      where: { status: "active" },
-    });
-
-    const totalInvestment = partners.reduce(
-      (sum, p) => sum + Number(p.totalInvested || 0),
-      0
-    );
-
-    const shares = partners.map((partner) => {
-      let percentage = 0;
-
-      if (settings.profitShareMethod === "equal") {
-        percentage = partners.length ? 100 / partners.length : 0;
-      } else {
-        percentage = totalInvestment
-          ? (Number(partner.totalInvested || 0) / totalInvestment) * 100
-          : 0;
-      }
-
-      const profitShare = netProfitAfterDonation * (percentage / 100);
-
-      const calculatedBalance =
-        Number(partner.totalInvested || 0) +
-        Number(profitShare || 0) -
-        Number(partner.totalWithdrawn || 0) -
-        Number(partner.lossShare || 0);
+    const shares = monthCalculation.shares.map((share) => {
+      const balance = allTimeBalances.find(
+        (b) => String(b.partnerId) === String(share.partnerId)
+      );
 
       return {
-        partnerId: partner.id,
-        partnerName: partner.name,
-        totalInvested: partner.totalInvested,
-        totalWithdrawn: partner.totalWithdrawn,
-        lossShare: partner.lossShare,
-        percentage,
-        profitShare,
-        calculatedBalance,
+        ...share,
+        monthlyProfitShare: share.profitShare,
+        totalProfitShare: balance?.totalProfitShare || 0,
+        calculatedBalance: balance?.calculatedBalance || 0,
+        monthlyProfitHistory: balance?.monthlyProfitHistory || [],
       };
     });
 
     res.json({
       month,
-      method: settings.profitShareMethod,
-      grossProfit: monthlyProfit,
-      donationPercentage: settings.donationPercentage,
-      donationAmount,
-      netProfitAfterDonation,
-      totalInvestment,
+      method: monthCalculation.method,
+      grossProfit: monthCalculation.grossProfit,
+      monthlyExpenses: monthCalculation.monthlyExpenses,
+      profitBeforeDonation: monthCalculation.profitBeforeDonation,
+      donationPercentage: monthCalculation.donationPercentage,
+      donationAmount: monthCalculation.donationAmount,
+      netProfitAfterDonation: monthCalculation.netProfitAfterDonation,
+      totalInvestment: monthCalculation.totalInvestment,
       shares,
     });
   } catch (error) {
@@ -280,67 +400,8 @@ exports.calculatePartnerProfitShares = async (req, res) => {
 };
 
 exports.creditPartnerProfitShares = async (req, res) => {
-  try {
-    const month = req.body.month || currentMonthKey();
-
-    const calculationReq = {
-      query: { month },
-    };
-
-    const settings = await getOrCreateSettings();
-    const { start, end } = getMonthRange(month);
-
-    const monthlyProfit = await sumField(Sale, "profitRecovered", {
-      createdAt: {
-        [Op.gte]: start,
-        [Op.lte]: end,
-      },
-    });
-
-    const partners = await Partner.findAll({
-      where: { status: "active" },
-    });
-
-    const totalInvestment = partners.reduce(
-      (sum, p) => sum + Number(p.totalInvested || 0),
-      0
-    );
-
-    for (const partner of partners) {
-      let percentage = 0;
-
-      if (settings.profitShareMethod === "equal") {
-        percentage = partners.length ? 100 / partners.length : 0;
-      } else {
-        percentage = totalInvestment
-          ? (Number(partner.totalInvested || 0) / totalInvestment) * 100
-          : 0;
-      }
-
-      const shareAmount = monthlyProfit * (percentage / 100);
-
-      if (shareAmount > 0) {
-        await PartnerTransaction.create({
-          partnerId: partner.id,
-          type: "profit_credit",
-          amount: Math.round(shareAmount),
-          description: `Profit share for ${month} (${settings.profitShareMethod})`,
-          transactionDate: new Date().toISOString().split("T")[0],
-          createdBy: req.user.id,
-        });
-      }
-    }
-
-    res.json({
-      message: "Partner profit shares credited successfully",
-      month,
-      method: settings.profitShareMethod,
-      monthlyProfit,
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Credit partner profit shares failed",
-      error: error.message,
-    });
-  }
+  res.status(400).json({
+    message:
+      "Manual credit is disabled. Partner profit shares are calculated automatically month-wise.",
+  });
 };

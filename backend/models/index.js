@@ -7,6 +7,8 @@ const Partner = require("./Partner");
 const PartnerTransaction = require("./PartnerTransaction");
 const BusinessSetting = require("./BusinessSetting");
 const DonationRecord = require("./DonationRecord");
+const Expense = require("./Expense");
+const ActivityLog = require("./ActivityLog");
 
 // Sale relations
 Sale.belongsTo(Customer, {
@@ -61,6 +63,16 @@ DonationRecord.belongsTo(User, {
   as: "paidByUser",
 });
 
+Expense.belongsTo(User, {
+  foreignKey: "createdBy",
+  as: "createdUser",
+});
+
+ActivityLog.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
 module.exports = {
   User,
   Customer,
@@ -71,4 +83,6 @@ module.exports = {
   PartnerTransaction,
   BusinessSetting,
   DonationRecord,
+  Expense,
+  ActivityLog,
 };

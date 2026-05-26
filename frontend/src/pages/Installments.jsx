@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
+import { downloadPdf, printElement } from "../utils/pdfUtils";
+import InstallmentReceiptPrint from "../components/InstallmentReceiptPrint.jsx";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
@@ -10,6 +12,7 @@ const Installments = () => {
 
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedSale, setSelectedSale] = useState(null);
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -23,9 +26,11 @@ const Installments = () => {
 
   const loadCustomers = async () => {
     setLoading(true);
+    setError("");
+
     try {
       const res = await api.get("/installments/customers");
-      setCustomers(res.data);
+      setCustomers(res.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load customers");
     } finally {
@@ -37,10 +42,11 @@ const Installments = () => {
     setSelectedCustomer(customer);
     setSelectedSale(null);
     setInstallments([]);
+    setError("");
 
     try {
       const res = await api.get(`/installments/customer/${customer.id}`);
-      setSales(res.data);
+      setSales(res.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load customer items");
     }
@@ -48,10 +54,11 @@ const Installments = () => {
 
   const loadSaleInstallments = async (sale) => {
     setSelectedSale(sale);
+    setError("");
 
     try {
       const res = await api.get(`/installments/sale/${sale.id}`);
-      setInstallments(res.data);
+      setInstallments(res.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load installments");
     }
@@ -121,7 +128,7 @@ const Installments = () => {
             Installments
           </h1>
           <p className="text-gray-400 text-sm">
-            Select customer, then item, then receive installment payment.
+            Select customer, item, then receive payments and print receipts.
           </p>
         </div>
 
@@ -216,21 +223,26 @@ const Installments = () => {
                   </div>
 
                   <span
-                    className={`h-fit px-3 py-1 rounded-full text-xs ${
-                      sale.status === "cleared"
+                    className={`h-fit px-3 py-1 rounded-full text-xs ${sale.status === "cleared"
                         ? "bg-green-600/20 text-green-300"
                         : "bg-blue-600/20 text-blue-300"
-                    }`}
+                      }`}
                   >
                     {sale.status}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                  <Info label="Total" value={money(sale.finalAmount)} />
-                  <Info label="Paid" value={money(sale.paidAmount)} />
-                  <Info label="Remaining" value={money(sale.remainingAmount)} />
-                  <Info label="Monthly" value={money(sale.monthlyInstallment)} />
+                  <Info label="Total" value={`Rs. ${money(sale.finalAmount)}`} />
+                  <Info label="Paid" value={`Rs. ${money(sale.paidAmount)}`} />
+                  <Info
+                    label="Remaining"
+                    value={`Rs. ${money(sale.remainingAmount)}`}
+                  />
+                  <Info
+                    label="Monthly"
+                    value={`Rs. ${money(sale.monthlyInstallment)}`}
+                  />
                 </div>
               </button>
             ))}
@@ -254,28 +266,36 @@ const Installments = () => {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-yellow-400">
-                  {selectedSale.product?.productName || `Product #${selectedSale.productId}`}
+                  {selectedSale.product?.productName ||
+                    `Product #${selectedSale.productId}`}
                 </h2>
                 <p className="text-gray-400 text-sm">
-                  Invoice: {selectedSale.invoiceNo} | Status: {selectedSale.status}
+                  Invoice: {selectedSale.invoiceNo} | Status:{" "}
+                  {selectedSale.status}
                 </p>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Mini title="Total" value={money(selectedSale.finalAmount)} />
-                <Mini title="Paid" value={money(selectedSale.paidAmount)} />
-                <Mini title="Remaining" value={money(selectedSale.remainingAmount)} />
-                <Mini title="Monthly" value={money(selectedSale.monthlyInstallment)} />
+                <Mini title="Total" value={`Rs. ${money(selectedSale.finalAmount)}`} />
+                <Mini title="Paid" value={`Rs. ${money(selectedSale.paidAmount)}`} />
+                <Mini
+                  title="Remaining"
+                  value={`Rs. ${money(selectedSale.remainingAmount)}`}
+                />
+                <Mini
+                  title="Monthly"
+                  value={`Rs. ${money(selectedSale.monthlyInstallment)}`}
+                />
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-            <Mini title="Schedule Total" value={money(summary.total)} />
-            <Mini title="Paid" value={money(summary.paid)} />
-            <Mini title="Remaining" value={money(summary.remaining)} />
-            <Mini title="Live Fine" value={money(summary.fine)} />
-            <Mini title="Payable" value={money(summary.payable)} />
+            <Mini title="Schedule Total" value={`Rs. ${money(summary.total)}`} />
+            <Mini title="Paid" value={`Rs. ${money(summary.paid)}`} />
+            <Mini title="Remaining" value={`Rs. ${money(summary.remaining)}`} />
+            <Mini title="Live Fine" value={`Rs. ${money(summary.fine)}`} />
+            <Mini title="Payable" value={`Rs. ${money(summary.payable)}`} />
           </div>
 
           <div className="hidden lg:block bg-black/70 border border-yellow-600/30 rounded-2xl overflow-hidden">
@@ -302,12 +322,12 @@ const Installments = () => {
                   >
                     <td className="p-3">#{item.installmentNo}</td>
                     <td className="p-3">{item.dueDate}</td>
-                    <td className="p-3">{money(item.amount)}</td>
-                    <td className="p-3">{money(item.paidAmount)}</td>
-                    <td className="p-3">{money(item.remainingAmount)}</td>
+                    <td className="p-3">Rs. {money(item.amount)}</td>
+                    <td className="p-3">Rs. {money(item.paidAmount)}</td>
+                    <td className="p-3">Rs. {money(item.remainingAmount)}</td>
                     <td className="p-3">{item.liveLateDays || 0} days</td>
                     <td className="p-3 text-orange-300">
-                      {money(item.liveFineAmount)}
+                      Rs. {money(item.liveFineAmount)}
                     </td>
                     <td className="p-3">
                       <Badge status={item.status} />
@@ -321,7 +341,12 @@ const Installments = () => {
                           Pay
                         </button>
                       ) : (
-                        <span className="text-green-300">Cleared</span>
+                        <button
+                          onClick={() => setSelectedReceipt(item)}
+                          className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold"
+                        >
+                          Receipt
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -345,19 +370,29 @@ const Installments = () => {
 
                 <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
                   <Info label="Due Date" value={item.dueDate} />
-                  <Info label="Amount" value={money(item.amount)} />
-                  <Info label="Paid" value={money(item.paidAmount)} />
-                  <Info label="Remaining" value={money(item.remainingAmount)} />
+                  <Info label="Amount" value={`Rs. ${money(item.amount)}`} />
+                  <Info label="Paid" value={`Rs. ${money(item.paidAmount)}`} />
+                  <Info
+                    label="Remaining"
+                    value={`Rs. ${money(item.remainingAmount)}`}
+                  />
                   <Info label="Late Days" value={item.liveLateDays || 0} />
-                  <Info label="Fine" value={money(item.liveFineAmount)} />
+                  <Info label="Fine" value={`Rs. ${money(item.liveFineAmount)}`} />
                 </div>
 
-                {item.status !== "paid" && (
+                {item.status !== "paid" ? (
                   <button
                     onClick={() => openPayment(item)}
                     className="mt-4 w-full bg-yellow-500 text-black py-3 rounded-xl font-bold"
                   >
                     Receive Payment
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setSelectedReceipt(item)}
+                    className="mt-4 w-full bg-green-600 text-white py-3 rounded-xl font-bold"
+                  >
+                    View Receipt
                   </button>
                 )}
               </div>
@@ -377,14 +412,21 @@ const Installments = () => {
             </h2>
 
             <p className="text-sm text-gray-400 mb-5">
-              Installment #{paymentModal.installmentNo} — Due {paymentModal.dueDate}
+              Installment #{paymentModal.installmentNo} — Due{" "}
+              {paymentModal.dueDate}
             </p>
 
             <div className="grid grid-cols-2 gap-3 mb-5 text-sm">
-              <Mini title="Remaining" value={money(paymentModal.remainingAmount)} />
-              <Mini title="Fine" value={money(paymentModal.liveFineAmount)} />
+              <Mini
+                title="Remaining"
+                value={`Rs. ${money(paymentModal.remainingAmount)}`}
+              />
+              <Mini title="Fine" value={`Rs. ${money(paymentModal.liveFineAmount)}`} />
               <Mini title="Late Days" value={paymentModal.liveLateDays || 0} />
-              <Mini title="Total Payable" value={money(paymentModal.liveTotalPayable)} />
+              <Mini
+                title="Total Payable"
+                value={`Rs. ${money(paymentModal.liveTotalPayable)}`}
+              />
             </div>
 
             <input
@@ -437,6 +479,54 @@ const Installments = () => {
           </form>
         </div>
       )}
+
+      {selectedReceipt && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-auto bg-[#0b0b0b] border border-yellow-600/40 rounded-3xl p-5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <h2 className="text-xl font-bold text-yellow-400">
+                Installment Receipt #{selectedReceipt.installmentNo}
+              </h2>
+
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() =>
+                    printElement(`receipt-print-${selectedReceipt.id}`)
+                  }
+                  className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold"
+                >
+                  Print
+                </button>
+
+                <button
+                  onClick={() =>
+                    downloadPdf(
+                      `receipt-print-${selectedReceipt.id}`,
+                      `receipt-${selectedReceipt.id}.pdf`
+                    )
+                  }
+                  className="bg-yellow-500 text-black px-4 py-2 rounded-xl font-bold"
+                >
+                  PDF
+                </button>
+
+                <button
+                  onClick={() => setSelectedReceipt(null)}
+                  className="bg-gray-700 text-white px-4 py-2 rounded-xl font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <InstallmentReceiptPrint
+              installment={selectedReceipt}
+              sale={selectedSale}
+              installments={installments}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -444,7 +534,7 @@ const Installments = () => {
 const Info = ({ label, value }) => (
   <div>
     <p className="text-gray-500 text-xs">{label}</p>
-    <p className="text-gray-200 font-semibold">{value}</p>
+    <p className="text-gray-200 font-semibold capitalize">{value}</p>
   </div>
 );
 
@@ -460,8 +550,8 @@ const Badge = ({ status }) => {
     status === "paid"
       ? "bg-green-600/20 text-green-300"
       : status === "partial"
-      ? "bg-blue-600/20 text-blue-300"
-      : "bg-yellow-600/20 text-yellow-300";
+        ? "bg-blue-600/20 text-blue-300"
+        : "bg-yellow-600/20 text-yellow-300";
 
   return (
     <span className={`px-3 py-1 rounded-full text-xs capitalize ${style}`}>

@@ -1,10 +1,20 @@
 const Customer = require("../models/Customer");
+const logActivity = require("../utils/activityLogger");
 
 exports.createCustomer = async (req, res) => {
   try {
     const customer = await Customer.create({
       ...req.body,
       createdBy: req.user.id,
+    });
+
+    await logActivity({
+      req,
+      action: "create",
+      module: "customers",
+      recordId: customer.id,
+      description: `Created customer: ${customer.name}`,
+      newData: customer.toJSON(),
     });
 
     res.status(201).json({
@@ -59,7 +69,18 @@ exports.updateCustomer = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
+    const oldData = customer.toJSON();
     await customer.update(req.body);
+
+    await logActivity({
+      req,
+      action: "update",
+      module: "customers",
+      recordId: customer.id,
+      description: `Updated customer: ${customer.name}`,
+      oldData,
+      newData: customer.toJSON(),
+    });
 
     res.json({
       message: "Customer updated successfully",
@@ -81,7 +102,18 @@ exports.deleteCustomer = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
+    const oldData = customer.toJSON();
+
     await customer.destroy();
+
+    await logActivity({
+      req,
+      action: "delete",
+      module: "customers",
+      recordId: oldData.id,
+      description: `Deleted customer: ${oldData.name}`,
+      oldData,
+    });
 
     res.json({ message: "Customer deleted successfully" });
   } catch (error) {

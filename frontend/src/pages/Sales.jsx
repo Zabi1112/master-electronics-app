@@ -1,22 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
+import { downloadPdf, printElement } from "../utils/pdfUtils";
+import InvoicePrint from "../components/InvoicePrint";
+
+const money = (v) => Number(v || 0).toLocaleString();
 
 const emptyForm = {
   saleType: "cash",
   customerId: "",
   productId: "",
   quantity: 1,
-
   salePrice: "",
   cashPrice: "",
-  installmentPrice: "",
-
   discount: 0,
   paidAmount: "",
   advanceAmount: "",
-
-  installmentMonths: 6,
+  installmentMonths: 3,
   installmentStartDate: "",
+};
+
+const getMarkup = (months) => {
+  if (Number(months) === 3) return 20;
+  if (Number(months) === 6) return 30;
+  if (Number(months) === 12) return 40;
+  return 0;
 };
 
 const Sales = () => {
@@ -25,11 +32,15 @@ const Sales = () => {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const loadData = async () => {
     setLoading(true);
+    setError("");
+
     try {
       const [salesRes, customersRes, productsRes] = await Promise.all([
         api.get("/sales"),
@@ -37,9 +48,13 @@ const Sales = () => {
         api.get("/products"),
       ]);
 
-      setSales(salesRes.data);
-      setCustomers(customersRes.data);
-      setProducts(productsRes.data.filter((p) => p.status === "in_stock" && Number(p.quantity) > 0));
+      setSales(salesRes.data || []);
+      setCustomers(customersRes.data || []);
+      setProducts(
+        (productsRes.data || []).filter(
+          (p) => p.status === "in_stock" && Number(p.quantity || 0) > 0
+        )
+      );
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load sales data");
     } finally {
@@ -60,28 +75,72 @@ const Sales = () => {
     const discount = Number(form.discount || 0);
 
     if (form.saleType === "cash") {
-      const price = Number(form.salePrice || form.cashPrice || 0) * qty;
-      const finalAmount = price - discount;
+      const cashTotal =
+        Number(form.salePrice || selectedProduct?.salePrice || 0) * qty;
+
+      const finalAmount = cashTotal - discount;
+
+      const paid =
+        form.paidAmount === "" ? finalAmount : Number(form.paidAmount || 0);
+
       return {
+        cashTotal,
+        markupPercent: 0,
+        installmentTotal: 0,
         finalAmount,
-        paid: Number(form.paidAmount || finalAmount),
-        remaining: finalAmount - Number(form.paidAmount || finalAmount),
+        advance: 0,
+        paid,
+        remaining: finalAmount - paid,
+        remainingInstallments: 0,
+        monthly: 0,
       };
     }
 
-    const installmentPrice = Number(form.installmentPrice || 0) * qty;
-    const finalAmount = installmentPrice - discount;
-    const advance = Number(form.advanceAmount || 0);
+    const cashTotal =
+      Number(form.cashPrice || selectedProduct?.salePrice || 0) * qty;
+
+    const markupPercent = getMarkup(form.installmentMonths);
+    const installmentTotal = cashTotal + (cashTotal * markupPercent) / 100;
+    const finalAmount = installmentTotal - discount;
+
+    const autoAdvance = finalAmount / Number(form.installmentMonths || 1);
+
+    const advance =
+      form.advanceAmount === "" ? autoAdvance : Number(form.advanceAmount || 0);
+
     const remaining = finalAmount - advance;
-    const monthly = remaining / Number(form.installmentMonths || 1);
+    const remainingInstallments = Number(form.installmentMonths || 1) - 1;
+
+    const monthly =
+      remainingInstallments > 0 ? remaining / remainingInstallments : 0;
 
     return {
+      cashTotal,
+      markupPercent,
+      installmentTotal,
       finalAmount,
+      advance,
       paid: advance,
       remaining,
+      remainingInstallments,
       monthly,
     };
-  }, [form]);
+  }, [form, selectedProduct]);
+
+  useEffect(() => {
+    if (form.saleType !== "installment") return;
+    if (!form.productId) return;
+
+    if (form.advanceAmount === "") {
+      setForm((old) => ({
+        ...old,
+        advanceAmount: calculations.advance
+          ? Math.round(calculations.advance)
+          : "",
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.productId, form.installmentMonths, form.quantity, form.cashPrice]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -94,8 +153,27 @@ const Sales = () => {
         productId: value,
         salePrice: product?.salePrice || "",
         cashPrice: product?.salePrice || "",
+        advanceAmount: old.saleType === "installment" ? "" : old.advanceAmount,
       }));
 
+      return;
+    }
+
+    if (name === "installmentMonths") {
+      setForm((old) => ({
+        ...old,
+        installmentMonths: value,
+        advanceAmount: "",
+      }));
+      return;
+    }
+
+    if (["quantity", "cashPrice", "discount"].includes(name)) {
+      setForm((old) => ({
+        ...old,
+        [name]: value,
+        advanceAmount: old.saleType === "installment" ? "" : old.advanceAmount,
+      }));
       return;
     }
 
@@ -106,6 +184,16 @@ const Sales = () => {
     e.preventDefault();
     setError("");
 
+    if (calculations.finalAmount <= 0) {
+      setError("Final amount must be greater than zero");
+      return;
+    }
+
+    if (calculations.remaining < 0) {
+      setError("Advance/Paid amount cannot be greater than final amount");
+      return;
+    }
+
     try {
       const payload =
         form.saleType === "cash"
@@ -113,26 +201,33 @@ const Sales = () => {
               saleType: "cash",
               productId: Number(form.productId),
               quantity: Number(form.quantity || 1),
-              salePrice: Number(form.salePrice || form.cashPrice || 0),
+              salePrice: Number(
+                form.salePrice || selectedProduct?.salePrice || 0
+              ),
               discount: Number(form.discount || 0),
-              paidAmount: Number(form.paidAmount || calculations.finalAmount),
+              paidAmount:
+                form.paidAmount === ""
+                  ? Number(calculations.finalAmount)
+                  : Number(form.paidAmount || 0),
             }
           : {
               saleType: "installment",
               customerId: Number(form.customerId),
               productId: Number(form.productId),
               quantity: Number(form.quantity || 1),
-              cashPrice: Number(form.cashPrice || selectedProduct?.salePrice || 0),
-              installmentPrice: Number(form.installmentPrice || 0),
+              cashPrice: Number(
+                form.cashPrice || selectedProduct?.salePrice || 0
+              ),
               discount: Number(form.discount || 0),
-              advanceAmount: Number(form.advanceAmount || 0),
-              installmentMonths: Number(form.installmentMonths || 1),
+              advanceAmount: Number(calculations.advance || 0),
+              installmentMonths: Number(form.installmentMonths || 3),
               installmentStartDate:
                 form.installmentStartDate ||
                 new Date().toISOString().split("T")[0],
             };
 
       await api.post("/sales", payload);
+
       setForm(emptyForm);
       setFormOpen(false);
       loadData();
@@ -181,7 +276,13 @@ const Sales = () => {
               name="saleType"
               className="px-4 py-3 rounded-xl bg-white"
               value={form.saleType}
-              onChange={(e) => setForm({ ...emptyForm, saleType: e.target.value })}
+              onChange={(e) =>
+                setForm({
+                  ...emptyForm,
+                  saleType: e.target.value,
+                  installmentMonths: 3,
+                })
+              }
             >
               <option value="cash">Cash Sale</option>
               <option value="installment">Installment Sale</option>
@@ -195,7 +296,7 @@ const Sales = () => {
                 onChange={handleChange}
                 required
               >
-                <option value="">Select Customer</option>
+                <option value="">Select Installment Customer</option>
                 {customers
                   .filter((c) => c.customerType === "installment")
                   .map((c) => (
@@ -216,7 +317,7 @@ const Sales = () => {
               <option value="">Select Product</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.productName} - Qty {p.quantity} - {Number(p.salePrice || 0).toLocaleString()}
+                  {p.productName} - Qty {p.quantity} - Rs. {money(p.salePrice)}
                 </option>
               ))}
             </select>
@@ -225,6 +326,7 @@ const Sales = () => {
               name="quantity"
               type="number"
               min="1"
+              max={selectedProduct?.quantity || ""}
               className="px-4 py-3 rounded-xl bg-white"
               placeholder="Quantity"
               value={form.quantity}
@@ -264,35 +366,27 @@ const Sales = () => {
                   placeholder="Cash Price"
                   value={form.cashPrice}
                   onChange={handleChange}
-                />
-
-                <input
-                  name="installmentPrice"
-                  type="number"
-                  className="px-4 py-3 rounded-xl bg-white"
-                  placeholder="Installment Total Price"
-                  value={form.installmentPrice}
-                  onChange={handleChange}
                   required
                 />
+
+                <select
+                  name="installmentMonths"
+                  className="px-4 py-3 rounded-xl bg-white"
+                  value={form.installmentMonths}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="3">3 Months - 20% Increase</option>
+                  <option value="6">6 Months - 30% Increase</option>
+                  <option value="12">12 Months - 40% Increase</option>
+                </select>
 
                 <input
                   name="advanceAmount"
                   type="number"
                   className="px-4 py-3 rounded-xl bg-white"
-                  placeholder="Advance Amount"
+                  placeholder="Advance / First Installment"
                   value={form.advanceAmount}
-                  onChange={handleChange}
-                  required
-                />
-
-                <input
-                  name="installmentMonths"
-                  type="number"
-                  min="1"
-                  className="px-4 py-3 rounded-xl bg-white"
-                  placeholder="Installment Months"
-                  value={form.installmentMonths}
                   onChange={handleChange}
                   required
                 />
@@ -317,42 +411,58 @@ const Sales = () => {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
-            <div className="bg-yellow-500/10 border border-yellow-600/30 rounded-xl p-4">
-              <p className="text-gray-400 text-sm">Final Amount</p>
-              <h3 className="text-xl font-bold text-yellow-400">
-                {Number(calculations.finalAmount || 0).toLocaleString()}
+          {form.saleType === "installment" && (
+            <div className="mt-5 bg-yellow-500/10 border border-yellow-600/30 rounded-2xl p-4">
+              <h3 className="text-yellow-400 font-bold mb-3">
+                Installment Price Calculation
               </h3>
-            </div>
 
-            <div className="bg-green-500/10 border border-green-600/30 rounded-xl p-4">
-              <p className="text-gray-400 text-sm">
-                {form.saleType === "cash" ? "Paid" : "Advance"}
-              </p>
-              <h3 className="text-xl font-bold text-green-300">
-                {Number(calculations.paid || 0).toLocaleString()}
-              </h3>
-            </div>
-
-            <div className="bg-red-500/10 border border-red-600/30 rounded-xl p-4">
-              <p className="text-gray-400 text-sm">Remaining</p>
-              <h3 className="text-xl font-bold text-red-300">
-                {Number(calculations.remaining || 0).toLocaleString()}
-              </h3>
-            </div>
-
-            {form.saleType === "installment" && (
-              <div className="bg-black/60 border border-yellow-600/30 rounded-xl p-4 md:col-span-3">
-                <p className="text-gray-400 text-sm">Monthly Installment</p>
-                <h3 className="text-2xl font-bold text-yellow-400">
-                  {Number(calculations.monthly || 0).toLocaleString()}
-                </h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  Due date will be generated on 10th of every month.
-                </p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <Calc
+                  title="Cash Total"
+                  value={`Rs. ${money(calculations.cashTotal)}`}
+                />
+                <Calc title="Markup" value={`${calculations.markupPercent}%`} />
+                <Calc
+                  title="Installment Price"
+                  value={`Rs. ${money(calculations.installmentTotal)}`}
+                />
+                <Calc
+                  title="Advance / 1st Installment"
+                  value={`Rs. ${money(calculations.advance)}`}
+                />
+                <Calc
+                  title="Remaining"
+                  value={`Rs. ${money(calculations.remaining)}`}
+                />
+                <Calc
+                  title="Remaining Installments"
+                  value={calculations.remainingInstallments}
+                />
+                <Calc
+                  title="Monthly Installment"
+                  value={`Rs. ${money(calculations.monthly)}`}
+                />
+                <Calc
+                  title="Final Amount"
+                  value={`Rs. ${money(calculations.finalAmount)}`}
+                />
               </div>
-            )}
-          </div>
+
+              <p className="text-xs text-gray-400 mt-3">
+                Advance amount is counted as installment #1. Remaining
+                installments will start from the next month on the 10th.
+              </p>
+            </div>
+          )}
+
+          {form.saleType === "cash" && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
+              <CalcBox title="Final Amount" value={calculations.finalAmount} />
+              <CalcBox title="Paid" value={calculations.paid} green />
+              <CalcBox title="Remaining" value={calculations.remaining} red />
+            </div>
+          )}
 
           <button className="mt-5 w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl">
             Save Sale
@@ -376,6 +486,7 @@ const Sales = () => {
                   <th className="p-3 text-left">Paid</th>
                   <th className="p-3 text-left">Remaining</th>
                   <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-right">Invoice</th>
                 </tr>
               </thead>
 
@@ -388,11 +499,21 @@ const Sales = () => {
                     <td className="p-3">{sale.invoiceNo}</td>
                     <td className="p-3 capitalize">{sale.saleType}</td>
                     <td className="p-3">{sale.customer?.name || "-"}</td>
-                    <td className="p-3">{sale.product?.productName || sale.productId}</td>
-                    <td className="p-3">{Number(sale.finalAmount || 0).toLocaleString()}</td>
-                    <td className="p-3">{Number(sale.paidAmount || 0).toLocaleString()}</td>
-                    <td className="p-3">{Number(sale.remainingAmount || 0).toLocaleString()}</td>
+                    <td className="p-3">
+                      {sale.product?.productName || sale.productId}
+                    </td>
+                    <td className="p-3">Rs. {money(sale.finalAmount)}</td>
+                    <td className="p-3">Rs. {money(sale.paidAmount)}</td>
+                    <td className="p-3">Rs. {money(sale.remainingAmount)}</td>
                     <td className="p-3 capitalize">{sale.status}</td>
+                    <td className="p-3 text-right">
+                      <button
+                        onClick={() => setSelectedInvoice(sale)}
+                        className="bg-yellow-500 text-black px-3 py-2 rounded-lg font-bold"
+                      >
+                        View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -421,43 +542,109 @@ const Sales = () => {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-gray-500">Customer</p>
-                    <p>{sale.customer?.name || "-"}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Status</p>
-                    <p className="capitalize">{sale.status}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Final</p>
-                    <p>{Number(sale.finalAmount || 0).toLocaleString()}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Paid</p>
-                    <p>{Number(sale.paidAmount || 0).toLocaleString()}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Remaining</p>
-                    <p>{Number(sale.remainingAmount || 0).toLocaleString()}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Profit</p>
-                    <p>{Number(sale.profit || 0).toLocaleString()}</p>
-                  </div>
+                  <Info label="Customer" value={sale.customer?.name || "-"} />
+                  <Info label="Status" value={sale.status} />
+                  <Info label="Final" value={`Rs. ${money(sale.finalAmount)}`} />
+                  <Info label="Paid" value={`Rs. ${money(sale.paidAmount)}`} />
+                  <Info
+                    label="Remaining"
+                    value={`Rs. ${money(sale.remainingAmount)}`}
+                  />
+                  <Info label="Profit" value={`Rs. ${money(sale.profit)}`} />
                 </div>
+
+                <button
+                  onClick={() => setSelectedInvoice(sale)}
+                  className="mt-4 w-full bg-yellow-500 text-black py-3 rounded-xl font-bold"
+                >
+                  View Invoice
+                </button>
               </div>
             ))}
           </div>
         </>
       )}
+
+      {selectedInvoice && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-auto bg-[#0b0b0b] border border-yellow-600/40 rounded-3xl p-5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <h2 className="text-xl font-bold text-yellow-400">
+                Invoice {selectedInvoice.invoiceNo}
+              </h2>
+
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() =>
+                    printElement(`invoice-print-${selectedInvoice.id}`)
+                  }
+                  className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold"
+                >
+                  Print
+                </button>
+
+                <button
+                  onClick={() =>
+                    downloadPdf(
+                      `invoice-print-${selectedInvoice.id}`,
+                      `${selectedInvoice.invoiceNo}.pdf`
+                    )
+                  }
+                  className="bg-yellow-500 text-black px-4 py-2 rounded-xl font-bold"
+                >
+                  PDF
+                </button>
+
+                <button
+                  onClick={() => setSelectedInvoice(null)}
+                  className="bg-gray-700 text-white px-4 py-2 rounded-xl font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <InvoicePrint sale={selectedInvoice} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+const Calc = ({ title, value }) => (
+  <div className="bg-black/60 border border-yellow-600/20 rounded-xl p-3">
+    <p className="text-gray-500 text-xs">{title}</p>
+    <h3 className="text-yellow-300 font-bold">{value}</h3>
+  </div>
+);
+
+const CalcBox = ({ title, value, green, red }) => (
+  <div
+    className={`border rounded-xl p-4 ${
+      green
+        ? "bg-green-500/10 border-green-600/30"
+        : red
+        ? "bg-red-500/10 border-red-600/30"
+        : "bg-yellow-500/10 border-yellow-600/30"
+    }`}
+  >
+    <p className="text-gray-400 text-sm">{title}</p>
+    <h3
+      className={`text-xl font-bold ${
+        green ? "text-green-300" : red ? "text-red-300" : "text-yellow-400"
+      }`}
+    >
+      Rs. {money(value)}
+    </h3>
+  </div>
+);
+
+const Info = ({ label, value }) => (
+  <div>
+    <p className="text-gray-500 text-xs">{label}</p>
+    <p className="text-gray-200 font-semibold capitalize">{value}</p>
+  </div>
+);
 
 export default Sales;

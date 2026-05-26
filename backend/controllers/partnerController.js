@@ -1,4 +1,5 @@
 const { sequelize } = require("../config/db");
+const logActivity = require("../utils/activityLogger");
 const {
     Partner,
     PartnerTransaction,
@@ -57,6 +58,15 @@ exports.createPartner = async (req, res) => {
             message: "Partner created successfully",
             partner,
         });
+
+        await logActivity({
+            req,
+            action: "create",
+            module: "partners",
+            recordId: partner.id,
+            description: `Created partner: ${partner.name}`,
+            newData: partner.toJSON(),
+        });
     } catch (error) {
         res.status(500).json({
             message: "Create partner failed",
@@ -112,12 +122,23 @@ exports.getPartnerById = async (req, res) => {
 exports.updatePartner = async (req, res) => {
     try {
         const partner = await Partner.findByPk(req.params.id);
+        const oldData = partner.toJSON();
 
         if (!partner) {
             return res.status(404).json({ message: "Partner not found" });
         }
 
         await partner.update(req.body);
+
+        await logActivity({
+            req,
+            action: "update",
+            module: "partners",
+            recordId: partner.id,
+            description: `Updated partner: ${partner.name}`,
+            oldData,
+            newData: partner.toJSON(),
+        });
 
         res.json({
             message: "Partner updated successfully",
@@ -136,7 +157,7 @@ exports.deletePartner = async (req, res) => {
 
     try {
         const partner = await Partner.findByPk(req.params.id, { transaction: t });
-
+        const oldData = partner.toJSON();
         if (!partner) {
             await t.rollback();
             return res.status(404).json({ message: "Partner not found" });
@@ -150,6 +171,15 @@ exports.deletePartner = async (req, res) => {
         await partner.destroy({ transaction: t });
 
         await t.commit();
+
+        await logActivity({
+            req,
+            action: "delete",
+            module: "partners",
+            recordId: oldData.id,
+            description: `Deleted partner: ${oldData.name}`,
+            oldData,
+        });
 
         res.json({ message: "Partner deleted successfully" });
     } catch (error) {
@@ -196,6 +226,15 @@ exports.addPartnerTransaction = async (req, res) => {
 
         await t.commit();
 
+        await logActivity({
+            req,
+            action: "create",
+            module: "partners",
+            recordId: trx.id,
+            description: `Partner transaction ${type} - Rs. ${amount}`,
+            newData: trx.toJSON(),
+        });
+
         res.status(201).json({
             message: "Partner transaction added successfully",
             transaction: trx,
@@ -214,17 +253,17 @@ exports.addPartnerTransaction = async (req, res) => {
 exports.getPartnerTransactions = async (req, res) => {
     try {
         const transactions = await PartnerTransaction.findAll({
-  where: { partnerId: req.params.id },
-  include: [
-    { model: Partner, as: "partner" },
-    {
-      model: User,
-      as: "createdUser",
-      attributes: ["id", "name", "username", "role"],
-    },
-  ],
-  order: [["transactionDate", "DESC"]],
-});
+            where: { partnerId: req.params.id },
+            include: [
+                { model: Partner, as: "partner" },
+                {
+                    model: User,
+                    as: "createdUser",
+                    attributes: ["id", "name", "username", "role"],
+                },
+            ],
+            order: [["transactionDate", "DESC"]],
+        });
 
         res.json(transactions);
     } catch (error) {

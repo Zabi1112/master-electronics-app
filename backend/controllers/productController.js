@@ -1,10 +1,20 @@
 const Product = require("../models/Product");
+const logActivity = require("../utils/activityLogger");
 
 exports.createProduct = async (req, res) => {
   try {
     const product = await Product.create({
       ...req.body,
       addedBy: req.user.id,
+    });
+
+    await logActivity({
+      req,
+      action: "create",
+      module: "products",
+      recordId: product.id,
+      description: `Created product: ${product.name}`,
+      newData: product.toJSON(),
     });
 
     res.status(201).json({
@@ -59,7 +69,18 @@ exports.updateProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
+    const oldData = product.toJSON();
     await product.update(req.body);
+
+    await logActivity({
+      req,
+      action: "update",
+      module: "products",
+      recordId: product.id,
+      description: `Updated product: ${product.name}`,
+      oldData,
+      newData: product.toJSON(),
+    });
 
     res.json({
       message: "Product updated successfully",
@@ -81,7 +102,17 @@ exports.deleteProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
+    const oldData = product.toJSON();
     await product.destroy();
+
+    await logActivity({
+      req,
+      action: "delete",
+      module: "products",
+      recordId: oldData.id,
+      description: `Deleted product: ${oldData.name}`,
+      oldData,
+    });
 
     res.json({ message: "Product deleted successfully" });
   } catch (error) {

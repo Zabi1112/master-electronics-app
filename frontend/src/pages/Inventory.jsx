@@ -17,22 +17,25 @@ const emptyForm = {
   notes: "",
 };
 
-const statusLabels = {
-  in_stock: "In Stock",
-  sold: "Sold",
-  returned: "Returned",
-  damaged: "Damaged",
-};
-
 const Inventory = () => {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const [filters, setFilters] = useState({
+    search: "",
+    category: "",
+    status: "",
+  });
+
   const loadProducts = async () => {
     setLoading(true);
+    setError("");
+
     try {
       const res = await api.get("/products");
       setProducts(res.data);
@@ -46,6 +49,28 @@ const Inventory = () => {
   useEffect(() => {
     loadProducts();
   }, []);
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const text = `${p.productName || ""} ${p.category || ""} ${
+        p.brand || ""
+      } ${p.model || ""} ${p.serialNumber || ""} ${
+        p.imeiNumber || ""
+      }`.toLowerCase();
+
+      const matchesSearch = text.includes(filters.search.toLowerCase());
+      const matchesCategory =
+        !filters.category ||
+        p.category?.toLowerCase() === filters.category.toLowerCase();
+      const matchesStatus = !filters.status || p.status === filters.status;
+
+      return matchesSearch && matchesCategory && matchesStatus;
+    });
+  }, [products, filters]);
+
+  const categories = useMemo(() => {
+    return [...new Set(products.map((p) => p.category).filter(Boolean))];
+  }, [products]);
 
   const summary = useMemo(() => {
     const inventoryValue = products.reduce((sum, p) => {
@@ -86,7 +111,7 @@ const Inventory = () => {
     setForm((old) => ({ ...old, [name]: value }));
   };
 
-  const createProduct = async (e) => {
+  const submitProduct = async (e) => {
     e.preventDefault();
     setError("");
 
@@ -99,12 +124,58 @@ const Inventory = () => {
         lowStockAlertQty: Number(form.lowStockAlertQty || 1),
       };
 
-      await api.post("/products", payload);
+      if (editingId) {
+        await api.put(`/products/${editingId}`, payload);
+      } else {
+        await api.post("/products", payload);
+      }
+
       setForm(emptyForm);
+      setEditingId(null);
       setFormOpen(false);
       loadProducts();
     } catch (err) {
-      setError(err.response?.data?.message || "Create product failed");
+      setError(err.response?.data?.message || "Save product failed");
+    }
+  };
+
+  const startEdit = (product) => {
+    setEditingId(product.id);
+    setForm({
+      productName: product.productName || "",
+      category: product.category || "",
+      brand: product.brand || "",
+      model: product.model || "",
+      serialNumber: product.serialNumber || "",
+      imeiNumber: product.imeiNumber || "",
+      purchasePrice: product.purchasePrice || "",
+      salePrice: product.salePrice || "",
+      quantity: product.quantity || 0,
+      lowStockAlertQty: product.lowStockAlertQty || 1,
+      warrantyInfo: product.warrantyInfo || "",
+      status: product.status || "in_stock",
+      notes: product.notes || "",
+    });
+
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm(emptyForm);
+    setFormOpen(false);
+  };
+
+  const deleteProduct = async (id) => {
+    const ok = window.confirm("Delete this product?");
+    if (!ok) return;
+
+    try {
+      await api.delete(`/products/${id}`);
+      loadProducts();
+    } catch (err) {
+      setError(err.response?.data?.message || "Delete product failed");
     }
   };
 
@@ -143,12 +214,16 @@ const Inventory = () => {
             Inventory
           </h1>
           <p className="text-gray-400 text-sm">
-            Add products, track stock, low stock, and inventory value.
+            Add, edit, search and manage stock.
           </p>
         </div>
 
         <button
-          onClick={() => setFormOpen(!formOpen)}
+          onClick={() => {
+            setFormOpen(!formOpen);
+            setEditingId(null);
+            setForm(emptyForm);
+          }}
           className="bg-yellow-500 text-black font-bold px-5 py-3 rounded-xl w-full sm:w-auto"
         >
           {formOpen ? "Close" : "+ Add Product"}
@@ -156,39 +231,67 @@ const Inventory = () => {
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 md:gap-5 mb-6">
-        <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4">
-          <p className="text-gray-400 text-xs">Products</p>
-          <h2 className="text-xl md:text-2xl font-bold text-yellow-400">
-            {summary.total}
-          </h2>
-        </div>
+        <SummaryCard title="Products" value={summary.total} />
+        <SummaryCard title="Inventory Value" value={summary.inventoryValue} money />
+        <SummaryCard title="Expected Sale" value={summary.expectedSaleValue} money />
+        <SummaryCard title="Low Stock" value={summary.lowStockCount} orange />
+        <SummaryCard title="Out of Stock" value={summary.outOfStockCount} red />
+      </div>
 
-        <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4">
-          <p className="text-gray-400 text-xs">Inventory Value</p>
-          <h2 className="text-xl md:text-2xl font-bold text-yellow-400">
-            {summary.inventoryValue.toLocaleString()}
-          </h2>
-        </div>
+      <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-5 mb-6">
+        <h2 className="text-lg font-bold text-yellow-400 mb-4">Filters</h2>
 
-        <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4">
-          <p className="text-gray-400 text-xs">Expected Sale</p>
-          <h2 className="text-xl md:text-2xl font-bold text-yellow-400">
-            {summary.expectedSaleValue.toLocaleString()}
-          </h2>
-        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input
+            className="px-4 py-3 rounded-xl bg-white"
+            placeholder="Search name, serial, IMEI..."
+            value={filters.search}
+            onChange={(e) =>
+              setFilters({ ...filters, search: e.target.value })
+            }
+          />
 
-        <div className="bg-black/70 border border-orange-600/30 rounded-2xl p-4">
-          <p className="text-gray-400 text-xs">Low Stock</p>
-          <h2 className="text-xl md:text-2xl font-bold text-orange-300">
-            {summary.lowStockCount}
-          </h2>
-        </div>
+          <select
+            className="px-4 py-3 rounded-xl bg-white"
+            value={filters.category}
+            onChange={(e) =>
+              setFilters({ ...filters, category: e.target.value })
+            }
+          >
+            <option value="">All Categories</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
 
-        <div className="bg-black/70 border border-red-600/30 rounded-2xl p-4">
-          <p className="text-gray-400 text-xs">Out of Stock</p>
-          <h2 className="text-xl md:text-2xl font-bold text-red-300">
-            {summary.outOfStockCount}
-          </h2>
+          <select
+            className="px-4 py-3 rounded-xl bg-white"
+            value={filters.status}
+            onChange={(e) =>
+              setFilters({ ...filters, status: e.target.value })
+            }
+          >
+            <option value="">All Status</option>
+            <option value="in_stock">In Stock</option>
+            <option value="sold">Sold</option>
+            <option value="returned">Returned</option>
+            <option value="damaged">Damaged</option>
+          </select>
+
+          <button
+            onClick={() =>
+              setFilters({
+                search: "",
+                category: "",
+                status: "",
+              })
+            }
+            className="bg-gray-700 text-white font-bold rounded-xl py-3"
+          >
+            Reset
+          </button>
         </div>
       </div>
 
@@ -200,11 +303,11 @@ const Inventory = () => {
 
       {formOpen && (
         <form
-          onSubmit={createProduct}
+          onSubmit={submitProduct}
           className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-6 mb-6"
         >
           <h2 className="text-xl font-bold text-yellow-400 mb-4">
-            Product Details
+            {editingId ? "Edit Product" : "Add Product"}
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -312,6 +415,7 @@ const Inventory = () => {
               onChange={handleChange}
             >
               <option value="in_stock">In Stock</option>
+              <option value="sold">Sold</option>
               <option value="returned">Returned</option>
               <option value="damaged">Damaged</option>
             </select>
@@ -326,9 +430,25 @@ const Inventory = () => {
             />
           </div>
 
-          <button className="mt-5 w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl">
-            Save Product
-          </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-5">
+            {editingId && (
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="bg-gray-700 text-white font-bold py-3 rounded-xl"
+              >
+                Cancel Edit
+              </button>
+            )}
+
+            <button
+              className={`bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl ${
+                editingId ? "" : "md:col-span-2"
+              }`}
+            >
+              {editingId ? "Update Product" : "Save Product"}
+            </button>
+          </div>
         </form>
       )}
 
@@ -346,11 +466,12 @@ const Inventory = () => {
                   <th className="p-3 text-left">Sale</th>
                   <th className="p-3 text-left">Qty</th>
                   <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
 
               <tbody>
-                {products.map((product) => (
+                {filteredProducts.map((product) => (
                   <tr
                     key={product.id}
                     className="border-t border-yellow-600/20 text-gray-200"
@@ -367,7 +488,9 @@ const Inventory = () => {
 
                     <td className="p-3 text-sm">
                       <div>{product.serialNumber || "-"}</div>
-                      <div className="text-gray-400">{product.imeiNumber || "-"}</div>
+                      <div className="text-gray-400">
+                        {product.imeiNumber || "-"}
+                      </div>
                     </td>
 
                     <td className="p-3">
@@ -381,6 +504,22 @@ const Inventory = () => {
                     <td className="p-3">{product.quantity}</td>
 
                     <td className="p-3">{getStockBadge(product)}</td>
+
+                    <td className="p-3 text-right">
+                      <button
+                        onClick={() => startEdit(product)}
+                        className="bg-yellow-500 text-black px-3 py-2 rounded-lg font-bold mr-2"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        onClick={() => deleteProduct(product.id)}
+                        className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold"
+                      >
+                        Delete
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -388,7 +527,7 @@ const Inventory = () => {
           </div>
 
           <div className="lg:hidden space-y-4">
-            {products.map((product) => (
+            {filteredProducts.map((product) => (
               <div
                 key={product.id}
                 className="bg-black/75 border border-yellow-600/30 rounded-2xl p-4"
@@ -408,35 +547,21 @@ const Inventory = () => {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-gray-500">Purchase</p>
-                    <p>{Number(product.purchasePrice || 0).toLocaleString()}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Sale</p>
-                    <p>{Number(product.salePrice || 0).toLocaleString()}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Quantity</p>
-                    <p>{product.quantity}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Alert Qty</p>
-                    <p>{product.lowStockAlertQty || 1}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">Serial</p>
-                    <p>{product.serialNumber || "-"}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-gray-500">IMEI</p>
-                    <p>{product.imeiNumber || "-"}</p>
-                  </div>
+                  <Info
+                    label="Purchase"
+                    value={Number(product.purchasePrice || 0).toLocaleString()}
+                  />
+                  <Info
+                    label="Sale"
+                    value={Number(product.salePrice || 0).toLocaleString()}
+                  />
+                  <Info label="Quantity" value={product.quantity} />
+                  <Info
+                    label="Alert Qty"
+                    value={product.lowStockAlertQty || 1}
+                  />
+                  <Info label="Serial" value={product.serialNumber || "-"} />
+                  <Info label="IMEI" value={product.imeiNumber || "-"} />
                 </div>
 
                 {product.warrantyInfo && (
@@ -445,6 +570,22 @@ const Inventory = () => {
                     <p>{product.warrantyInfo}</p>
                   </div>
                 )}
+
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <button
+                    onClick={() => startEdit(product)}
+                    className="bg-yellow-500 text-black py-3 rounded-xl font-bold"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    onClick={() => deleteProduct(product.id)}
+                    className="bg-red-600 text-white py-3 rounded-xl font-bold"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -453,5 +594,33 @@ const Inventory = () => {
     </div>
   );
 };
+
+const SummaryCard = ({ title, value, money, orange, red }) => (
+  <div
+    className={`bg-black/70 border rounded-2xl p-4 ${
+      red
+        ? "border-red-600/30"
+        : orange
+        ? "border-orange-600/30"
+        : "border-yellow-600/30"
+    }`}
+  >
+    <p className="text-gray-400 text-xs">{title}</p>
+    <h2
+      className={`text-xl md:text-2xl font-bold ${
+        red ? "text-red-300" : orange ? "text-orange-300" : "text-yellow-400"
+      }`}
+    >
+      {money ? Number(value || 0).toLocaleString() : value}
+    </h2>
+  </div>
+);
+
+const Info = ({ label, value }) => (
+  <div>
+    <p className="text-gray-500 text-xs">{label}</p>
+    <p className="text-gray-200 font-semibold">{value}</p>
+  </div>
+);
 
 export default Inventory;
