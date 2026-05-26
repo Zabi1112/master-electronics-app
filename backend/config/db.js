@@ -34,20 +34,27 @@
 const { Sequelize } = require("sequelize");
 require("dotenv").config();
 
-const sequelize = new Sequelize(process.env.DATABASE_URL, {
-  dialect: "postgres",
-  logging: false,
-  dialectOptions: {
-    ssl: {
-      require: true,
-      rejectUnauthorized: false,
-    },
-  },
-});
+let sequelize;
+
+const getSequelize = () => {
+  if (!sequelize) {
+    sequelize = new Sequelize(process.env.DATABASE_URL, {
+      dialect: "postgres",
+      logging: false,
+      dialectOptions: {
+        ssl: {
+          require: true,
+          rejectUnauthorized: false,
+        },
+      },
+    });
+  }
+  return sequelize;
+};
 
 const connectDB = async () => {
   try {
-    await sequelize.authenticate();
+    await getSequelize().authenticate();
     console.log("Supabase PostgreSQL Connected");
   } catch (error) {
     console.error("PostgreSQL Error:", error.message);
@@ -55,5 +62,4 @@ const connectDB = async () => {
   }
 };
 
-// db.js - remove the default export line
-module.exports = { sequelize, connectDB }; // ✅ single clean export
+module.exports = { getSequelize, connectDB };

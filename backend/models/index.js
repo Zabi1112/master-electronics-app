@@ -1,4 +1,5 @@
-const { sequelize } = require("../config/db");
+const { getSequelize } = require("../config/db");
+const sequelize = getSequelize();
 
 // Initialize all models
 const User = require("./User")(sequelize);
