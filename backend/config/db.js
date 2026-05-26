@@ -55,6 +55,5 @@ const connectDB = async () => {
   }
 };
 
-module.exports = sequelize;
-module.exports.sequelize = sequelize;
-module.exports.connectDB = connectDB;
+// db.js - remove the default export line
+module.exports = { sequelize, connectDB }; // ✅ single clean export
