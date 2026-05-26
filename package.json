@@ -1,0 +1,25 @@
+{
+  "name": "master-electronics-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zabi1112/master-electronics-app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Zabi1112/master-electronics-app/issues"
+  },
+  "homepage": "https://github.com/Zabi1112/master-electronics-app#readme",
+  "dependencies": {
+    "pg": "^8.21.0",
+    "pg-hstore": "^2.3.4"
+  }
+}
