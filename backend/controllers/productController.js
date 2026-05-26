@@ -1,4 +1,5 @@
-const Product = require("../models/Product");
+const { Product } = require("../models");
+// only destructure what that specific controller needs
 const logActivity = require("../utils/activityLogger");
 
 exports.createProduct = async (req, res) => {

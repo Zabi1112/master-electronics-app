@@ -1,11 +1,6 @@
 const { Op, fn, col } = require("sequelize");
-
-const Product = require("../models/Product");
-const Sale = require("../models/Sale");
-const Installment = require("../models/Installment");
-const Partner = require("../models/Partner");
-const DonationRecord = require("../models/DonationRecord");
-const Expense = require("../models/Expense");
+const { Product, Sale, Installment, Partner, DonationRecord, Expense} = require("../models");
+// only destructure what that specific controller needs
 
 const sumField = async (Model, field, where = {}) => {
   const result = await Model.findOne({

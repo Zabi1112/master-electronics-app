@@ -1,79 +1,44 @@
-const User = require("./User");
-const Customer = require("./Customer");
-const Product = require("./Product");
-const Sale = require("./Sale");
-const Installment = require("./Installment");
-const Partner = require("./Partner");
-const PartnerTransaction = require("./PartnerTransaction");
-const BusinessSetting = require("./BusinessSetting");
-const DonationRecord = require("./DonationRecord");
-const Expense = require("./Expense");
-const ActivityLog = require("./ActivityLog");
+const { sequelize } = require("../config/db");
+
+// Initialize all models
+const User = require("./User")(sequelize);
+const Customer = require("./Customer")(sequelize);
+const Product = require("./Product")(sequelize);
+const Sale = require("./Sale")(sequelize);
+const Installment = require("./Installment")(sequelize);
+const Partner = require("./Partner")(sequelize);
+const PartnerTransaction = require("./PartnerTransaction")(sequelize);
+const BusinessSetting = require("./BusinessSetting")(sequelize);
+const DonationRecord = require("./DonationRecord")(sequelize);
+const Expense = require("./Expense")(sequelize);
+const ActivityLog = require("./ActivityLog")(sequelize);
 
 // Sale relations
-Sale.belongsTo(Customer, {
-  foreignKey: "customerId",
-  as: "customer",
-});
-
-Sale.belongsTo(Product, {
-  foreignKey: "productId",
-  as: "product",
-});
-
-Sale.belongsTo(User, {
-  foreignKey: "soldBy",
-  as: "salesman",
-});
+Sale.belongsTo(Customer, { foreignKey: "customerId", as: "customer" });
+Sale.belongsTo(Product, { foreignKey: "productId", as: "product" });
+Sale.belongsTo(User, { foreignKey: "soldBy", as: "salesman" });
 
 // Installment relations
-Installment.belongsTo(Sale, {
-  foreignKey: "saleId",
-  as: "sale",
-});
-
-Installment.belongsTo(Customer, {
-  foreignKey: "customerId",
-  as: "customer",
-});
-
-Installment.belongsTo(User, {
-  foreignKey: "receivedBy",
-  as: "receiver",
-});
+Installment.belongsTo(Sale, { foreignKey: "saleId", as: "sale" });
+Installment.belongsTo(Customer, { foreignKey: "customerId", as: "customer" });
+Installment.belongsTo(User, { foreignKey: "receivedBy", as: "receiver" });
 
 // Partner relations
-PartnerTransaction.belongsTo(Partner, {
-  foreignKey: "partnerId",
-  as: "partner",
-});
+PartnerTransaction.belongsTo(Partner, { foreignKey: "partnerId", as: "partner" });
+PartnerTransaction.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
 
-PartnerTransaction.belongsTo(User, {
-  foreignKey: "createdBy",
-  as: "createdUser",
-});
+// Donation relations
+DonationRecord.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
+DonationRecord.belongsTo(User, { foreignKey: "markedPaidBy", as: "paidByUser" });
 
-DonationRecord.belongsTo(User, {
-  foreignKey: "createdBy",
-  as: "createdUser",
-});
+// Expense relations
+Expense.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
 
-DonationRecord.belongsTo(User, {
-  foreignKey: "markedPaidBy",
-  as: "paidByUser",
-});
-
-Expense.belongsTo(User, {
-  foreignKey: "createdBy",
-  as: "createdUser",
-});
-
-ActivityLog.belongsTo(User, {
-  foreignKey: "userId",
-  as: "user",
-});
+// ActivityLog relations
+ActivityLog.belongsTo(User, { foreignKey: "userId", as: "user" });
 
 module.exports = {
+  sequelize,
   User,
   Customer,
   Product,

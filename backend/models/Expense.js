@@ -1,5 +1,13 @@
 const { DataTypes } = require("sequelize");
-const { sequelize } = require("../config/db");
+
+module.exports = (sequelize) => {
+  return sequelize.define("Customer", {
+    id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+    name: { type: DataTypes.STRING, allowNull: false },
+    fatherName: { type: DataTypes.STRING, allowNull: true },
+    // ... rest of your fields stay exactly the same ...
+  }, { tableName: "customers", timestamps: true });
+};
 
 const Expense = sequelize.define(
   "Expense",

@@ -1,5 +1,7 @@
 const bcrypt = require("bcryptjs");
-const User = require("../models/User");
+
+const { User } = require("../models");
+// only destructure what that specific controller needs
 
 exports.createUser = async (req, res) => {
   try {

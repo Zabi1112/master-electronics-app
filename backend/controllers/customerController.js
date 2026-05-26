@@ -1,4 +1,5 @@
-const Customer = require("../models/Customer");
+const {  Customer } = require("../models");
+// only destructure what that specific controller needs
 const logActivity = require("../utils/activityLogger");
 
 exports.createCustomer = async (req, res) => {

@@ -1,7 +1,8 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const User = require("../models/User");
 
+const { User } = require("../models");
+// only destructure what that specific controller needs
 const generateToken = (user) => {
   return jwt.sign(
     { id: user.id, role: user.role },
