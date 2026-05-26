@@ -1,4 +1,5 @@
-const { sequelize } = require("../config/db");
+const { getSequelize } = require("../config/db");
+const sequelize = getSequelize();
 const { Product, Sale, Installment, Customer, User } = require("../models");
 const logActivity = require("../utils/activityLogger");
 
