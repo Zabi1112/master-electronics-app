@@ -38,9 +38,14 @@ let sequelize;
 
 const getSequelize = () => {
   if (!sequelize) {
+    // Ensure the pg driver is explicitly required so bundlers include it
+    // and Sequelize doesn't fail to load the dialect at runtime.
+    const pg = require("pg");
+
     sequelize = new Sequelize(process.env.DATABASE_URL, {
       dialect: "postgres",
       logging: false,
+      dialectModule: pg,
       dialectOptions: {
         ssl: {
           require: true,
