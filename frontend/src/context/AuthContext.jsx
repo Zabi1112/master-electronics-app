@@ -13,6 +13,7 @@ export const AuthProvider = ({ children }) => {
     const res = await api.post("/auth/login", { username, password });
 
     localStorage.setItem("master_token", res.data.token);
+    localStorage.setItem("token", res.data.token);
     localStorage.setItem("master_user", JSON.stringify(res.data.user));
     setUser(res.data.user);
 
