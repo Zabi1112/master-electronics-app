@@ -8,6 +8,7 @@ const API_BASE_URL =
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
@@ -20,5 +21,23 @@ api.interceptors.request.use((config) => {
 
   return config;
 });
+
+// Add response error handling for 401 errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Clear auth on 401 response
+      localStorage.removeItem("master_token");
+      localStorage.removeItem("token");
+      localStorage.removeItem("master_user");
+      // Optionally redirect to login
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export default api;

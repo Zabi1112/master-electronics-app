@@ -8,7 +8,20 @@ const { connectDB, getSequelize } = require("./config/db");
 
 const app = express();
 
-app.use(cors());
+// CORS configuration with credentials support
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "https://master-electronics-app.vercel.app",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 
@@ -16,17 +29,36 @@ app.get("/", (req, res) => {
   res.send("Master Electronics API Running");
 });
 const PORT = process.env.PORT || 5000;
+
+// Validate required environment variables
+const validateEnv = () => {
+  const required = ["JWT_SECRET"];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    console.warn(
+      `Warning: Missing environment variables: ${missing.join(", ")}`
+    );
+    console.warn(
+      "JWT_SECRET is required for token validation. Set it in .env or Vercel environment variables."
+    );
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(`Missing critical env vars: ${missing.join(", ")}`);
+    }
+  }
+};
+
 const startServer = async () => {
   try {
+    validateEnv();
+
     await connectDB();
     await getSequelize().sync();
     //await getSequelize().sync({ alter: true });
     console.log("Tables synced");
 
-    // Load models and routes after DB is connected and synced so controllers
-    // that depend on models don't trigger Sequelize initialization before
-    // the DB driver is available in the runtime bundle.
+    // Load models FIRST to ensure they are initialized before routes
     require("./models");
+    console.log("Models initialized");
 
     const authRoutes = require("./routes/authRoutes");
     const userRoutes = require("./routes/userRoutes");

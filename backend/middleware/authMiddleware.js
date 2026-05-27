@@ -1,8 +1,10 @@
 const jwt = require("jsonwebtoken");
-const { User } = require("../models");
 
 exports.protect = async (req, res, next) => {
   try {
+    // Import User model at runtime to ensure it's initialized
+    const { User } = require("../models");
+
     let token;
 
     if (
@@ -15,6 +17,13 @@ exports.protect = async (req, res, next) => {
     if (!token) {
       return res.status(401).json({
         message: "Not authorized, no token",
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      console.error("JWT_SECRET is not configured");
+      return res.status(500).json({
+        message: "Server configuration error",
       });
     }
 
