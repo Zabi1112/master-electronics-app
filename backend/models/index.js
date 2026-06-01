@@ -6,6 +6,7 @@ const User = require("./User")(sequelize);
 const Customer = require("./Customer")(sequelize);
 const Product = require("./Product")(sequelize);
 const Sale = require("./Sale")(sequelize);
+const SaleReturn = require("./SaleReturn")(sequelize);
 const Installment = require("./Installment")(sequelize);
 const Partner = require("./Partner")(sequelize);
 const PartnerTransaction = require("./PartnerTransaction")(sequelize);
@@ -18,6 +19,25 @@ const ActivityLog = require("./ActivityLog")(sequelize);
 Sale.belongsTo(Customer, { foreignKey: "customerId", as: "customer" });
 Sale.belongsTo(Product, { foreignKey: "productId", as: "product" });
 Sale.belongsTo(User, { foreignKey: "soldBy", as: "salesman" });
+
+// Sale return relations
+SaleReturn.belongsTo(Sale, { foreignKey: "saleId", as: "sale" });
+SaleReturn.belongsTo(Product, {
+  foreignKey: "productId",
+  as: "returnedProduct",
+});
+SaleReturn.belongsTo(Product, {
+  foreignKey: "replacementProductId",
+  as: "replacementProduct",
+});
+SaleReturn.belongsTo(User, {
+  foreignKey: "createdBy",
+  as: "createdByUser",
+});
+SaleReturn.belongsTo(User, {
+  foreignKey: "processedBy",
+  as: "processedByUser",
+});
 
 // Installment relations
 Installment.belongsTo(Sale, { foreignKey: "saleId", as: "sale" });
@@ -44,6 +64,7 @@ module.exports = {
   Customer,
   Product,
   Sale,
+  SaleReturn,
   Installment,
   Partner,
   PartnerTransaction,

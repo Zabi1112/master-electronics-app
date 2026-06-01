@@ -54,13 +54,16 @@ const startServer = async () => {
     validateEnv();
 
     await connectDB();
-    await getSequelize().sync();
-    //await getSequelize().sync({ alter: true });
-    console.log("Tables synced");
-
-    // Load models FIRST to ensure they are initialized before routes
     require("./models");
     console.log("Models initialized");
+
+    if (process.env.NODE_ENV !== "production") {
+      await getSequelize().sync({ alter: true });
+    } else {
+      await getSequelize().sync();
+      //await getSequelize().sync({ alter: true });
+    }
+    console.log("Tables synced");
 
     const authRoutes = require("./routes/authRoutes");
     const userRoutes = require("./routes/userRoutes");
@@ -74,12 +77,14 @@ const startServer = async () => {
     const financeRoutes = require("./routes/financeRoutes");
     const expenseRoutes = require("./routes/expenseRoutes");
     const activityRoutes = require("./routes/activityRoutes");
+    const returnRoutes = require("./routes/returnRoutes");
 
     app.use("/api/auth", authRoutes);
     app.use("/api/users", userRoutes);
     app.use("/api/customers", customerRoutes);
     app.use("/api/products", productRoutes);
     app.use("/api/sales", saleRoutes);
+    app.use("/api/returns", returnRoutes);
     app.use("/api/installments", installmentRoutes);
     app.use("/api/partners", partnerRoutes);
     app.use("/api/dashboard", dashboardRoutes);

@@ -9,6 +9,7 @@ import Users from "./pages/Users.jsx";
 import Customers from "./pages/Customers.jsx";
 import Inventory from "./pages/Inventory.jsx";
 import Sales from "./pages/Sales.jsx";
+import Returns from "./pages/Returns.jsx";
 import Installments from "./pages/Installments.jsx";
 import Partners from "./pages/Partners.jsx";
 import Reports from "./pages/Reports.jsx";
@@ -47,6 +48,7 @@ function App() {
             <Route path="reports" element={<Reports />} />
             <Route path="finance" element={<Finance />} />
             <Route path="expenses" element={<Expenses />} />
+            <Route path="returns" element={<Returns />} />
             <Route path="history" element={<ActivityLogs />} />
           </Route>
         </Routes>

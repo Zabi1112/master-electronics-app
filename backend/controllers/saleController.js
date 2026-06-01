@@ -1,5 +1,6 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
+const { Op } = require("sequelize");
 const { Product, Sale, Installment, Customer, User } = require("../models");
 const logActivity = require("../utils/activityLogger");
 
@@ -139,6 +140,45 @@ exports.createSale = async (req, res) => {
     }
 
     if (profitPending < 0) profitPending = 0;
+
+    const duplicateWindowMs = 30 * 1000; // prevent accidental double submissions
+    const duplicateSearch = {
+      saleType,
+      productId,
+      quantity,
+      discount,
+      salePrice: saleType === "cash" ? finalCashPrice : finalInstallmentPrice,
+      cashPrice: finalCashPrice,
+      finalAmount,
+      paidAmount: totalPaid,
+      remainingAmount,
+      soldBy: req.user.id,
+      createdAt: {
+        [Op.gte]: new Date(Date.now() - duplicateWindowMs),
+      },
+    };
+
+    if (saleType === "installment") {
+      duplicateSearch.customerId = customerId;
+      duplicateSearch.installmentMonths = installmentMonths;
+      duplicateSearch.installmentStartDate =
+        installmentStartDate || new Date().toISOString().split("T")[0];
+    } else {
+      duplicateSearch.customerId = null;
+    }
+
+    const existingDuplicate = await Sale.findOne({
+      where: duplicateSearch,
+      transaction: t,
+    });
+
+    if (existingDuplicate) {
+      await t.rollback();
+      return res.status(409).json({
+        message:
+          "Duplicate sale detected: the same sale was submitted recently. Please check the invoice before creating it again.",
+      });
+    }
 
     const sale = await Sale.create(
       {

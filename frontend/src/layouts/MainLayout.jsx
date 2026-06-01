@@ -25,6 +25,7 @@ const navItems = [
   { label: "Customers", path: "/customers", icon: UserRound },
   { label: "Inventory", path: "/inventory", icon: Package },
   { label: "Sales", path: "/sales", icon: ShoppingCart },
+  { label: "Returns", path: "/returns", icon: ReceiptText },
   { label: "Installments", path: "/installments", icon: CalendarClock },
   { label: "Partners", path: "/partners", icon: HandCoins },
   { label: "History", path: "/history", icon: History },
