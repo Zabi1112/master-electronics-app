@@ -16,6 +16,7 @@ export const downloadPdf = (elementId, fileName = "document.pdf") => {
       scale: 2,
       useCORS: true,
       scrollY: 0,
+      backgroundColor: "#050505",
     },
     jsPDF: {
       unit: "mm",
@@ -47,20 +48,74 @@ export const printElement = (elementId) => {
         <title>Master Electronics</title>
         <style>
           body {
-            font-family: Arial, sans-serif;
-            color: #111;
+            font-family: Inter, Arial, sans-serif;
+            color: #fff;
+            background: #050505;
             padding: 20px;
+          }
+
+          .invoice-root, .receipt-root {
+            width: 100%;
+            box-sizing: border-box;
+            background: #050505;
+            color: #fff;
+          }
+
+          .header-card {
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            background: rgba(251, 191, 36, 0.1);
+          }
+
+          .section-card {
+            border: 1px solid rgba(251, 191, 36, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 24px;
+            padding: 18px;
           }
 
           table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 12px;
           }
 
           th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            font-size: 12px;
+            border: 1px solid #2b2b34;
+            padding: 12px 14px;
+          }
+
+          thead tr {
+            background: #111827;
+            color: #d1d5db;
+          }
+
+          tbody tr:nth-child(odd) {
+            background: rgba(255, 255, 255, 0.04);
+          }
+
+          .text-yellow {
+            color: #fbbf24;
+          }
+
+          .text-gray {
+            color: #9ca3af;
+          }
+
+          .text-muted {
+            color: #d1d5db;
+          }
+
+          .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          }
+
+          .signature {
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 16px;
+            text-align: center;
           }
 
           .no-break, .avoid-break, .pdf-card, tr {

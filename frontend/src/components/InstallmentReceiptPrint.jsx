@@ -19,97 +19,110 @@ const InstallmentReceiptPrint = ({ installment, sale, installments = [] }) => {
   return (
     <div
       id={`receipt-print-${installment.id}`}
-      className="bg-white text-black p-8 w-full"
+      className="receipt-root bg-[#050505] text-white p-8 w-full rounded-[32px] border border-yellow-500/20 shadow-[0_20px_80px_rgba(0,0,0,0.35)]"
     >
-      <div className="border-b-4 border-yellow-500 pb-4 mb-6 text-center">
-        <img src="/logo.png" className="h-20 mx-auto mb-2" />
-        <h1 className="text-3xl font-bold">Master Electronics</h1>
-        <p className="text-sm">Installment Payment Receipt</p>
-      </div>
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
+        <div>
+          <img src="/logo.png" className="h-20 mb-4" />
+          <h1 className="text-3xl font-bold text-yellow-400">Master Electronics</h1>
+          <p className="text-gray-400 mt-1">Installment Payment Receipt</p>
+        </div>
 
-      <div className="grid grid-cols-2 gap-3 text-sm mb-6">
-        <p><b>Receipt No:</b> RCP-{installment.id}</p>
-        <p><b>Receipt Date:</b> {installment.paidDate || "-"}</p>
-        <p><b>Invoice No:</b> {sale?.invoiceNo || installment.saleId}</p>
-        <p><b>Installment No:</b> #{installment.installmentNo}</p>
-      </div>
-
-      <div className="border rounded-lg p-4 mb-5">
-        <h2 className="font-bold mb-3">Customer Details</h2>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <p><b>Name:</b> {installment.customer?.name || sale?.customer?.name || "-"}</p>
-          <p><b>Phone:</b> {installment.customer?.phone || sale?.customer?.phone || "-"}</p>
-          <p><b>CNIC:</b> {installment.customer?.cnic || sale?.customer?.cnic || "-"}</p>
-          <p><b>Address:</b> {installment.customer?.address || sale?.customer?.address || "-"}</p>
+        <div className="rounded-3xl border border-yellow-500/20 bg-yellow-500/10 px-6 py-4 text-right">
+          <p className="text-xs uppercase tracking-[0.2em] text-yellow-300 font-semibold">Receipt</p>
+          <p className="text-xl font-bold mt-2">RCP-{installment.id}</p>
+          <p className="text-sm text-gray-400 mt-1">{installment.paidDate || "-"}</p>
         </div>
       </div>
 
-      <div className="border rounded-lg p-4 mb-5">
-        <h2 className="font-bold mb-3">Item / Sale Details</h2>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <p><b>Product:</b> {sale?.product?.productName || "-"}</p>
-          <p><b>Sale Type:</b> {sale?.saleType || "installment"}</p>
-          <p><b>Total Item Price:</b> Rs. {money(sale?.finalAmount)}</p>
-          <p><b>Total Paid Till Now:</b> Rs. {money(totalPaidTillNow || sale?.paidAmount)}</p>
-          <p><b>Total Remaining:</b> Rs. {money(sale?.remainingAmount)}</p>
-          <p><b>Status:</b> {sale?.status || "-"}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8 text-sm">
+        <div className="rounded-3xl border border-yellow-500/10 bg-white/5 p-5">
+          <p className="text-gray-400 uppercase tracking-[0.2em] text-[11px] mb-3">Invoice</p>
+          <p className="text-white font-semibold">{sale?.invoiceNo || installment.saleId}</p>
+          <p className="text-gray-400 text-sm mt-1">Installment #{installment.installmentNo}</p>
+        </div>
+
+        <div className="rounded-3xl border border-yellow-500/10 bg-white/5 p-5">
+          <div className="grid gap-3 text-sm text-gray-300">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-yellow-300">Customer</p>
+              <p className="mt-1">{installment.customer?.name || sale?.customer?.name || "-"}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-yellow-300">Phone</p>
+              <p className="mt-1">{installment.customer?.phone || sale?.customer?.phone || "-"}</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <table className="w-full border-collapse text-sm mb-5">
-        <tbody>
-          <tr>
-            <td className="border p-2 font-bold">Current Installment Amount</td>
-            <td className="border p-2">Rs. {money(installment.amount)}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Amount Paid in This Receipt</td>
-            <td className="border p-2">Rs. {money(installment.paidAmount)}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Fine Paid</td>
-            <td className="border p-2">Rs. {money(installment.finePaid)}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Fine Discount</td>
-            <td className="border p-2">Rs. {money(installment.fineDiscount)}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Remaining of This Installment</td>
-            <td className="border p-2">Rs. {money(installment.remainingAmount)}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Paid Installments</td>
-            <td className="border p-2">{paidInstallments}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Pending Installments</td>
-            <td className="border p-2">{pendingInstallments}</td>
-          </tr>
-          <tr>
-            <td className="border p-2 font-bold">Due Date</td>
-            <td className="border p-2">{installment.dueDate}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div className="rounded-3xl border border-yellow-500/10 bg-white/5 p-5 mb-5 text-sm text-gray-300">
+        <h2 className="font-bold text-white mb-3">Item / Sale Details</h2>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <p><span className="text-gray-400">Product:</span> {sale?.product?.productName || "-"}</p>
+          <p><span className="text-gray-400">Sale Type:</span> {sale?.saleType || "installment"}</p>
+          <p><span className="text-gray-400">Total Item Price:</span> Rs. {money(sale?.finalAmount)}</p>
+          <p><span className="text-gray-400">Total Paid Till Now:</span> Rs. {money(totalPaidTillNow || sale?.paidAmount)}</p>
+          <p><span className="text-gray-400">Total Remaining:</span> Rs. {money(sale?.remainingAmount)}</p>
+          <p><span className="text-gray-400">Status:</span> {sale?.status || "-"}</p>
+        </div>
+      </div>
 
-      <p className="text-sm mb-10">
-        <b>Notes:</b>{" "}
+      <div className="rounded-3xl border border-yellow-500/10 bg-white/5 p-5 mb-5 text-sm">
+        <table className="w-full border-separate border-spacing-0">
+          <tbody>
+            <tr className="text-gray-300">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Current Installment Amount</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.amount)}</td>
+            </tr>
+            <tr className="bg-white/5 text-gray-200">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Amount Paid in This Receipt</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.paidAmount)}</td>
+            </tr>
+            <tr className="text-gray-300">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Fine Paid</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.finePaid)}</td>
+            </tr>
+            <tr className="bg-white/5 text-gray-200">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Fine Discount</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.fineDiscount)}</td>
+            </tr>
+            <tr className="text-gray-300">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Remaining of This Installment</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.remainingAmount)}</td>
+            </tr>
+            <tr className="bg-white/5 text-gray-200">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Paid Installments</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">{paidInstallments}</td>
+            </tr>
+            <tr className="text-gray-300">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Pending Installments</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">{pendingInstallments}</td>
+            </tr>
+            <tr className="bg-white/5 text-gray-200">
+              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Due Date</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">{installment.dueDate}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-sm mb-10 text-gray-300">
+        <span className="font-semibold text-white">Notes:</span>{" "}
         {installment.installmentNo === 1
           ? "Advance received as first installment."
           : installment.notes || "-"}
       </p>
 
-      <div className="grid grid-cols-2 gap-12 text-center text-sm mt-16">
-        <div className="border-t pt-2">Customer Signature</div>
-        <div className="border-t pt-2">Receiver Signature</div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 text-center text-sm mt-16">
+        <div className="border-t border-white/10 pt-2">Customer Signature</div>
+        <div className="border-t border-white/10 pt-2">Receiver Signature</div>
       </div>
 
-      <p className="text-center text-xs mt-8">
+      <p className="text-center text-xs mt-8 text-gray-500">
         This receipt is generated by Master Electronics system.
       </p>
     </div>
-  );
-};
+  );};
 
 export default InstallmentReceiptPrint;
