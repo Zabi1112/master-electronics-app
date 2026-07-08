@@ -49,6 +49,7 @@ exports.payInstallment = async (req, res) => {
 
     const installment = await Installment.findByPk(req.params.id, {
       transaction: t,
+      lock: t.LOCK.UPDATE,
     });
 
     if (!installment) {
@@ -88,6 +89,7 @@ exports.payInstallment = async (req, res) => {
         },
         order: [["installmentNo", "ASC"]],
         transaction: t,
+        lock: t.LOCK.UPDATE,
       });
 
       const futureTotalRemaining = futureInstallments.reduce(
@@ -173,6 +175,7 @@ exports.payInstallment = async (req, res) => {
 
     const sale = await Sale.findByPk(installment.saleId, {
       transaction: t,
+      lock: t.LOCK.UPDATE,
     });
 
     if (!sale) {

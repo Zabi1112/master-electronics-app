@@ -1,7 +1,16 @@
 const money = (v) => Number(v || 0).toLocaleString();
 
-const InstallmentReceiptPrint = ({ installment, sale, installments = [] }) => {
+const InstallmentReceiptPrint = ({
+  installment,
+  sale,
+  installments = [],
+  payment = null,
+}) => {
   if (!installment) return null;
+
+  const amountReceivedNow = payment
+    ? Number(payment.totalPaid || 0)
+    : Number(installment.paidAmount || 0);
 
   const totalPaidTillNow = installments.reduce(
     (sum, i) => sum + Number(i.paidAmount || 0),
@@ -75,13 +84,13 @@ const InstallmentReceiptPrint = ({ installment, sale, installments = [] }) => {
               <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Current Installment Amount</td>
               <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.amount)}</td>
             </tr>
-            <tr className="bg-white/5 text-gray-200">
-              <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Amount Paid in This Receipt</td>
-              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.paidAmount)}</td>
+            <tr className="bg-yellow-500/10 text-yellow-200">
+              <td className="border border-[#2b2b34] px-4 py-3 font-bold">Total Amount Received</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right font-bold">Rs. {money(amountReceivedNow)}</td>
             </tr>
             <tr className="text-gray-300">
               <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Fine Paid</td>
-              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.finePaid)}</td>
+              <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(payment ? payment.finePaid : installment.finePaid)}</td>
             </tr>
             <tr className="bg-white/5 text-gray-200">
               <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Fine Discount</td>
@@ -91,6 +100,16 @@ const InstallmentReceiptPrint = ({ installment, sale, installments = [] }) => {
               <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Remaining of This Installment</td>
               <td className="border border-[#2b2b34] px-4 py-3 text-right">Rs. {money(installment.remainingAmount)}</td>
             </tr>
+            {payment?.reamortized && (
+              <tr className="bg-blue-500/10 text-blue-200">
+                <td className="border border-[#2b2b34] px-4 py-3 font-semibold">
+                  Extra Rs. {money(payment.excessAmount)} Applied Ahead
+                </td>
+                <td className="border border-[#2b2b34] px-4 py-3 text-right">
+                  Reduced next {payment.futureCount} installment(s)
+                </td>
+              </tr>
+            )}
             <tr className="bg-white/5 text-gray-200">
               <td className="border border-[#2b2b34] px-4 py-3 font-semibold">Paid Installments</td>
               <td className="border border-[#2b2b34] px-4 py-3 text-right">{paidInstallments}</td>

@@ -23,6 +23,8 @@ const Installments = () => {
     fineDiscount: 0,
     notes: "",
   });
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+  const [lastPayment, setLastPayment] = useState(null);
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -93,13 +95,30 @@ const Installments = () => {
 
   const submitPayment = async (e) => {
     e.preventDefault();
+    if (submittingPayment) return;
+
     setError("");
+    setSubmittingPayment(true);
 
     try {
-      await api.put(`/installments/${paymentModal.id}/pay`, {
+      const res = await api.put(`/installments/${paymentModal.id}/pay`, {
         amount: Number(paymentForm.amount || 0),
         fineDiscount: Number(paymentForm.fineDiscount || 0),
         notes: paymentForm.notes,
+      });
+
+      const paidInstallment = res.data.installment;
+
+      setLastPayment({
+        totalPaid:
+          Number(res.data.installmentPaid || 0) +
+          Number(res.data.finePaid || 0) +
+          Number(res.data.excessAmount || 0),
+        installmentPaid: res.data.installmentPaid,
+        finePaid: res.data.finePaid,
+        excessAmount: res.data.excessAmount,
+        reamortized: res.data.reamortized,
+        futureCount: res.data.updatedFutureInstallments?.length || 0,
       });
 
       setPaymentModal(null);
@@ -108,8 +127,12 @@ const Installments = () => {
         await loadSaleInstallments(selectedSale);
         await loadCustomerItems(selectedCustomer);
       }
+
+      setSelectedReceipt(paidInstallment);
     } catch (err) {
       setError(err.response?.data?.message || "Payment failed");
+    } finally {
+      setSubmittingPayment(false);
     }
   };
 
@@ -342,7 +365,10 @@ const Installments = () => {
                         </button>
                       ) : (
                         <button
-                          onClick={() => setSelectedReceipt(item)}
+                          onClick={() => {
+                            setLastPayment(null);
+                            setSelectedReceipt(item);
+                          }}
                           className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold"
                         >
                           Receipt
@@ -389,7 +415,10 @@ const Installments = () => {
                   </button>
                 ) : (
                   <button
-                    onClick={() => setSelectedReceipt(item)}
+                    onClick={() => {
+                      setLastPayment(null);
+                      setSelectedReceipt(item);
+                    }}
                     className="mt-4 w-full bg-green-600 text-white py-3 rounded-xl font-bold"
                   >
                     View Receipt
@@ -467,13 +496,18 @@ const Installments = () => {
               <button
                 type="button"
                 onClick={() => setPaymentModal(null)}
-                className="bg-gray-700 text-white py-3 rounded-xl font-bold"
+                disabled={submittingPayment}
+                className="bg-gray-700 text-white py-3 rounded-xl font-bold disabled:opacity-50"
               >
                 Cancel
               </button>
 
-              <button className="bg-yellow-500 text-black py-3 rounded-xl font-bold">
-                Save Payment
+              <button
+                type="submit"
+                disabled={submittingPayment}
+                className="bg-yellow-500 text-black py-3 rounded-xl font-bold disabled:opacity-50"
+              >
+                {submittingPayment ? "Saving..." : "Save Payment"}
               </button>
             </div>
           </form>
@@ -511,7 +545,10 @@ const Installments = () => {
                 </button>
 
                 <button
-                  onClick={() => setSelectedReceipt(null)}
+                  onClick={() => {
+                    setSelectedReceipt(null);
+                    setLastPayment(null);
+                  }}
                   className="bg-gray-700 text-white px-4 py-2 rounded-xl font-bold"
                 >
                   Close
@@ -521,6 +558,7 @@ const Installments = () => {
 
             <InstallmentReceiptPrint
               installment={selectedReceipt}
+              payment={lastPayment}
               sale={selectedSale}
               installments={installments}
             />
