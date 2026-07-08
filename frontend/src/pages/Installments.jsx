@@ -112,8 +112,7 @@ const Installments = () => {
       setLastPayment({
         totalPaid:
           Number(res.data.installmentPaid || 0) +
-          Number(res.data.finePaid || 0) +
-          Number(res.data.excessAmount || 0),
+          Number(res.data.finePaid || 0),
         installmentPaid: res.data.installmentPaid,
         finePaid: res.data.finePaid,
         excessAmount: res.data.excessAmount,

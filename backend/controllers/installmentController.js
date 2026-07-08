@@ -139,12 +139,22 @@ exports.payInstallment = async (req, res) => {
       }
     }
 
-    let remainingPayment = payAmount - excessAmount;
+    let finePaidNow;
+    let installmentPaidNow;
 
-    const finePaidNow = Math.min(remainingPayment, finalFineAmount);
-    remainingPayment -= finePaidNow;
-
-    const installmentPaidNow = Math.min(remainingPayment, currentRemaining);
+    if (excessAmount > 0) {
+      // This installment absorbs the full principal payment, including the
+      // excess — its own "amount" grows to match so it reads as fully paid
+      // at the amount the customer actually handed over for it.
+      finePaidNow = finalFineAmount;
+      installmentPaidNow = payAmount - finePaidNow;
+      installment.amount = Number(installment.amount || 0) + excessAmount;
+    } else {
+      let remainingPayment = payAmount;
+      finePaidNow = Math.min(remainingPayment, finalFineAmount);
+      remainingPayment -= finePaidNow;
+      installmentPaidNow = Math.min(remainingPayment, currentRemaining);
+    }
 
     installment.fineAmount = fineData.fineAmount;
     installment.fineDiscount =
@@ -171,7 +181,7 @@ exports.payInstallment = async (req, res) => {
 
     await installment.save({ transaction: t });
 
-    const totalPrincipalPaidNow = installmentPaidNow + excessAmount;
+    const totalPrincipalPaidNow = installmentPaidNow;
 
     const sale = await Sale.findByPk(installment.saleId, {
       transaction: t,
