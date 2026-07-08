@@ -42,10 +42,19 @@ const getSequelize = () => {
     // and Sequelize doesn't fail to load the dialect at runtime.
     const pg = require("pg");
 
+    const poolMax = Number(process.env.DB_POOL_MAX || 2);
+
     sequelize = new Sequelize(process.env.DATABASE_URL, {
       dialect: "postgres",
       logging: false,
       dialectModule: pg,
+      pool: {
+        max: poolMax,
+        min: 0,
+        acquire: 30000,
+        idle: 10000,
+        evict: 10000,
+      },
       dialectOptions: {
         ssl: {
           require: true,

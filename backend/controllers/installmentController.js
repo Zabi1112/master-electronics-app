@@ -73,26 +73,76 @@ exports.payInstallment = async (req, res) => {
 
     const finalFineAmount = Math.max(0, fineData.fineAmount - discountFine);
 
-    const totalPayable =
-      Number(installment.remainingAmount || 0) + Number(finalFineAmount);
+    const currentRemaining = Number(installment.remainingAmount || 0);
+    const totalPayable = currentRemaining + Number(finalFineAmount);
+
+    let excessAmount = 0;
+    let futureInstallments = [];
 
     if (payAmount > totalPayable) {
-      await t.rollback();
-      return res.status(400).json({
-        message: "Payment amount cannot be greater than total payable amount",
-        totalPayable,
+      futureInstallments = await Installment.findAll({
+        where: {
+          saleId: installment.saleId,
+          installmentNo: { [Op.gt]: installment.installmentNo },
+          status: { [Op.in]: ["pending", "partial"] },
+        },
+        order: [["installmentNo", "ASC"]],
+        transaction: t,
       });
+
+      const futureTotalRemaining = futureInstallments.reduce(
+        (sum, inst) => sum + Number(inst.remainingAmount || 0),
+        0
+      );
+
+      excessAmount = payAmount - totalPayable;
+
+      if (excessAmount > futureTotalRemaining) {
+        await t.rollback();
+        return res.status(400).json({
+          message:
+            "Payment amount cannot be greater than the total remaining balance of the sale",
+          totalPayable: totalPayable + futureTotalRemaining,
+        });
+      }
+
+      // Re-amortize: shrink the still-pending future installments so their
+      // combined remaining balance drops by exactly the excess paid now.
+      const newFutureTotal = futureTotalRemaining - excessAmount;
+      const count = futureInstallments.length;
+      let allocated = 0;
+
+      for (let i = 0; i < count; i++) {
+        const inst = futureInstallments[i];
+        const isLast = i === count - 1;
+        const share = isLast
+          ? Math.round((newFutureTotal - allocated) * 100) / 100
+          : Math.round((newFutureTotal / count) * 100) / 100;
+
+        allocated += share;
+
+        const paidPart = Number(inst.paidAmount || 0);
+        inst.amount = paidPart + share;
+        inst.remainingAmount = share;
+
+        if (share <= 0) {
+          inst.remainingAmount = 0;
+          inst.status = "paid";
+          inst.paidDate = inst.paidDate || todayDate();
+        } else {
+          inst.status = paidPart > 0 ? "partial" : "pending";
+        }
+
+        await inst.save({ transaction: t });
+      }
     }
 
-    let remainingPayment = payAmount;
+    let remainingPayment = payAmount - excessAmount;
 
     const finePaidNow = Math.min(remainingPayment, finalFineAmount);
     remainingPayment -= finePaidNow;
 
-    const installmentPaidNow = Math.min(
-      remainingPayment,
-      Number(installment.remainingAmount || 0)
-    );
+    const installmentPaidNow = Math.min(remainingPayment, currentRemaining);
 
     installment.fineAmount = fineData.fineAmount;
     installment.fineDiscount =
@@ -119,6 +169,8 @@ exports.payInstallment = async (req, res) => {
 
     await installment.save({ transaction: t });
 
+    const totalPrincipalPaidNow = installmentPaidNow + excessAmount;
+
     const sale = await Sale.findByPk(installment.saleId, {
       transaction: t,
     });
@@ -129,11 +181,11 @@ exports.payInstallment = async (req, res) => {
     }
 
     const previousPaid = Number(sale.paidAmount || 0);
-    const newPaid = previousPaid + installmentPaidNow;
+    const newPaid = previousPaid + totalPrincipalPaidNow;
 
     sale.paidAmount = newPaid;
     sale.remainingAmount =
-      Number(sale.remainingAmount || 0) - installmentPaidNow;
+      Number(sale.remainingAmount || 0) - totalPrincipalPaidNow;
 
     if (sale.remainingAmount < 0) {
       sale.remainingAmount = 0;
@@ -178,7 +230,10 @@ exports.payInstallment = async (req, res) => {
       action: "pay",
       module: "installments",
       recordId: installment.id,
-      description: `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow}`,
+      description:
+        excessAmount > 0
+          ? `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow} | Excess Rs. ${excessAmount} re-amortized across ${futureInstallments.length} future installment(s)`
+          : `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow}`,
       newData: {
         installment: installment.toJSON(),
         sale: sale.toJSON(),
@@ -187,6 +242,10 @@ exports.payInstallment = async (req, res) => {
           installmentPaid: installmentPaidNow,
           finePaid: finePaidNow,
           fineDiscount: discountFine,
+          excessAmount,
+          reamortizedInstallments: futureInstallments.map((inst) =>
+            inst.toJSON()
+          ),
         },
       },
     });
@@ -198,6 +257,9 @@ exports.payInstallment = async (req, res) => {
       fineDiscount: discountFine,
       finePaid: finePaidNow,
       installmentPaid: installmentPaidNow,
+      excessAmount,
+      reamortized: excessAmount > 0,
+      updatedFutureInstallments: futureInstallments,
       installment,
       sale,
     });
