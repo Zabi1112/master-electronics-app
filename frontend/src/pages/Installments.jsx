@@ -12,6 +12,7 @@ import {
 import api from "../api/api";
 import { downloadPdf, printElement } from "../utils/pdfUtils";
 import InstallmentReceiptPrint from "../components/InstallmentReceiptPrint.jsx";
+import DueThisMonthPrint from "../components/DueThisMonthPrint.jsx";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
@@ -30,6 +31,10 @@ const Installments = () => {
 
   const [collections, setCollections] = useState(null);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
+
+  const [dueModalOpen, setDueModalOpen] = useState(false);
+  const [dueThisMonth, setDueThisMonth] = useState(null);
+  const [dueLoading, setDueLoading] = useState(false);
 
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedSale, setSelectedSale] = useState(null);
@@ -100,6 +105,23 @@ const Installments = () => {
       );
     } finally {
       setCollectionsLoading(false);
+    }
+  };
+
+  const loadDueThisMonth = async () => {
+    setDueLoading(true);
+    setError("");
+
+    try {
+      const res = await api.get("/installments/due-this-month");
+      setDueThisMonth(res.data);
+      setDueModalOpen(true);
+    } catch (err) {
+      setError(
+        err.response?.data?.message || "Failed to load this month's due list"
+      );
+    } finally {
+      setDueLoading(false);
     }
   };
 
@@ -197,37 +219,47 @@ const Installments = () => {
           </p>
         </div>
 
-        {view === "customers" && (selectedCustomer || selectedSale) ? (
+        <div className="flex flex-wrap items-center gap-3">
+          {view === "customers" && (selectedCustomer || selectedSale) ? (
+            <button
+              onClick={resetSelection}
+              className="bg-yellow-500 text-black font-bold px-5 py-3 rounded-xl"
+            >
+              Back to Customers
+            </button>
+          ) : (
+            <div className="flex gap-2 bg-black/60 border border-yellow-600/30 rounded-xl p-1 w-fit">
+              <button
+                onClick={() => setView("customers")}
+                className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                  view === "customers"
+                    ? "bg-yellow-500 text-black"
+                    : "text-yellow-300"
+                }`}
+              >
+                Customers
+              </button>
+              <button
+                onClick={() => setView("collections")}
+                className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                  view === "collections"
+                    ? "bg-yellow-500 text-black"
+                    : "text-yellow-300"
+                }`}
+              >
+                Monthly Collections
+              </button>
+            </div>
+          )}
+
           <button
-            onClick={resetSelection}
-            className="bg-yellow-500 text-black font-bold px-5 py-3 rounded-xl"
+            onClick={loadDueThisMonth}
+            disabled={dueLoading}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-3 rounded-xl disabled:opacity-50"
           >
-            Back to Customers
+            {dueLoading ? "Loading..." : "This Month's Due List"}
           </button>
-        ) : (
-          <div className="flex gap-2 bg-black/60 border border-yellow-600/30 rounded-xl p-1 w-fit">
-            <button
-              onClick={() => setView("customers")}
-              className={`px-4 py-2 rounded-lg font-bold text-sm ${
-                view === "customers"
-                  ? "bg-yellow-500 text-black"
-                  : "text-yellow-300"
-              }`}
-            >
-              Customers
-            </button>
-            <button
-              onClick={() => setView("collections")}
-              className={`px-4 py-2 rounded-lg font-bold text-sm ${
-                view === "collections"
-                  ? "bg-yellow-500 text-black"
-                  : "text-yellow-300"
-              }`}
-            >
-              Monthly Collections
-            </button>
-          </div>
-        )}
+        </div>
       </div>
 
       {error && (
@@ -750,6 +782,52 @@ const Installments = () => {
               payment={lastPayment}
               sale={selectedSale}
               installments={installments}
+            />
+          </div>
+        </div>
+      )}
+
+      {dueModalOpen && dueThisMonth && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-auto bg-[#0b0b0b] border border-yellow-600/40 rounded-3xl p-5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <h2 className="text-xl font-bold text-yellow-400">
+                This Month's Due Installments
+              </h2>
+
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => printElement("due-this-month-print")}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold"
+                >
+                  Print
+                </button>
+
+                <button
+                  onClick={() =>
+                    downloadPdf(
+                      "due-this-month-print",
+                      `installments-due-${dueThisMonth.summary.month}.pdf`
+                    )
+                  }
+                  className="bg-yellow-500 text-black px-4 py-2 rounded-xl font-bold"
+                >
+                  PDF
+                </button>
+
+                <button
+                  onClick={() => setDueModalOpen(false)}
+                  className="bg-gray-700 text-white px-4 py-2 rounded-xl font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <DueThisMonthPrint
+              month={dueThisMonth.summary.month}
+              summary={dueThisMonth.summary}
+              installments={dueThisMonth.installments}
             />
           </div>
         </div>

@@ -500,6 +500,79 @@ exports.getMonthlyCollections = async (req, res) => {
   }
 };
 
+exports.getDueThisMonth = async (req, res) => {
+  try {
+    const { month } = req.query; // optional "YYYY-MM", defaults to current month
+
+    const now = new Date();
+    const monthKey =
+      month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    const [year, mon] = monthKey.split("-").map(Number);
+    const startDate = `${monthKey}-01`;
+    const endDate = new Date(year, mon, 0).toISOString().split("T")[0]; // last day of month
+
+    const installments = await Installment.findAll({
+      where: {
+        dueDate: { [Op.gte]: startDate, [Op.lte]: endDate },
+      },
+      include: [
+        { model: Customer, as: "customer" },
+        {
+          model: Sale,
+          as: "sale",
+          include: [{ model: Product, as: "product" }],
+        },
+      ],
+      order: [["dueDate", "ASC"]],
+    });
+
+    const today = todayDate();
+
+    const data = installments.map((item) => {
+      const json = item.toJSON();
+      const isPaid = json.status === "paid";
+      const isOverdue = !isPaid && json.dueDate < today;
+
+      return {
+        id: json.id,
+        saleId: json.saleId,
+        installmentNo: json.installmentNo,
+        dueDate: json.dueDate,
+        amount: json.amount,
+        paidAmount: json.paidAmount,
+        remainingAmount: json.remainingAmount,
+        status: json.status,
+        displayStatus: isPaid ? "paid" : isOverdue ? "overdue" : json.status,
+        customerName: json.customer?.name || "-",
+        customerPhone: json.customer?.phone || "-",
+        productName: json.sale?.product?.productName || "-",
+        invoiceNo: json.sale?.invoiceNo || "-",
+      };
+    });
+
+    const summary = {
+      month: monthKey,
+      totalItems: data.length,
+      paidCount: data.filter((d) => d.displayStatus === "paid").length,
+      unpaidCount: data.filter((d) => d.displayStatus !== "paid").length,
+      totalAmount: data.reduce((s, d) => s + Number(d.amount || 0), 0),
+      totalCollected: data.reduce((s, d) => s + Number(d.paidAmount || 0), 0),
+      totalRemaining: data.reduce(
+        (s, d) => s + Number(d.remainingAmount || 0),
+        0
+      ),
+    };
+
+    res.json({ summary, installments: data });
+  } catch (error) {
+    res.status(500).json({
+      message: "Due this month report failed",
+      error: error.message,
+    });
+  }
+};
+
 exports.getSaleInstallments = async (req, res) => {
   try {
     const installments = await Installment.findAll({
