@@ -9,6 +9,7 @@ const {
   Customer,
   User,
   Product,
+  ActivityLog,
 } = require("../models");
 
 const todayDate = () => new Date().toISOString().split("T")[0];
@@ -422,6 +423,78 @@ exports.getCustomerInstallmentItems = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Get customer items failed",
+      error: error.message,
+    });
+  }
+};
+
+exports.getMonthlyCollections = async (req, res) => {
+  try {
+    const { from, to } = req.query; // optional "YYYY-MM" bounds
+
+    // Advance amounts are paid at sale creation and stored on installment #1,
+    // which is never touched again by payInstallment - its paidDate is reliable.
+    const advanceInstallments = await Installment.findAll({
+      where: {
+        installmentNo: 1,
+        paidDate: { [Op.ne]: null },
+      },
+      attributes: ["paidDate", "paidAmount"],
+      raw: true,
+    });
+
+    // Every later installment/fine payment is logged once per transaction here,
+    // since the Installment row itself only keeps cumulative state.
+    const paymentLogs = await ActivityLog.findAll({
+      where: { module: "installments", action: "pay" },
+      attributes: ["createdAt", "newData"],
+      raw: true,
+    });
+
+    const monthly = {};
+
+    const ensureMonth = (key) => {
+      if (!monthly[key]) {
+        monthly[key] = { month: key, advance: 0, installment: 0, fine: 0 };
+      }
+      return monthly[key];
+    };
+
+    for (const inst of advanceInstallments) {
+      const key = String(inst.paidDate).slice(0, 7);
+      ensureMonth(key).advance += Number(inst.paidAmount || 0);
+    }
+
+    for (const log of paymentLogs) {
+      const key = new Date(log.createdAt).toISOString().slice(0, 7);
+      const payment = log.newData?.payment || {};
+      const entry = ensureMonth(key);
+      entry.installment += Number(payment.installmentPaid || 0);
+      entry.fine += Number(payment.finePaid || 0);
+    }
+
+    let months = Object.values(monthly)
+      .map((m) => ({ ...m, total: m.advance + m.installment + m.fine }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    if (from) months = months.filter((m) => m.month >= from);
+    if (to) months = months.filter((m) => m.month <= to);
+
+    const summary = months.reduce(
+      (acc, m) => {
+        acc.totalAdvance += m.advance;
+        acc.totalInstallment += m.installment;
+        acc.totalFine += m.fine;
+        acc.totalCollected += m.total;
+        return acc;
+      },
+      { totalAdvance: 0, totalInstallment: 0, totalFine: 0, totalCollected: 0 }
+    );
+
+    res.json({ summary, months });
+  } catch (error) {
+    res.status(500).json({
+      message: "Monthly collection report failed",
       error: error.message,
     });
   }

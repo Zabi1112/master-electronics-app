@@ -1,14 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import api from "../api/api";
 import { downloadPdf, printElement } from "../utils/pdfUtils";
 import InstallmentReceiptPrint from "../components/InstallmentReceiptPrint.jsx";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
+const monthLabel = (key) => {
+  const [year, month] = key.split("-");
+  const date = new Date(Number(year), Number(month) - 1, 1);
+  return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+};
+
 const Installments = () => {
+  const [view, setView] = useState("customers"); // "customers" | "collections"
+
   const [customers, setCustomers] = useState([]);
   const [sales, setSales] = useState([]);
   const [installments, setInstallments] = useState([]);
+
+  const [collections, setCollections] = useState(null);
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
 
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedSale, setSelectedSale] = useState(null);
@@ -66,9 +87,31 @@ const Installments = () => {
     }
   };
 
+  const loadMonthlyCollections = async () => {
+    setCollectionsLoading(true);
+    setError("");
+
+    try {
+      const res = await api.get("/installments/monthly-collections");
+      setCollections(res.data);
+    } catch (err) {
+      setError(
+        err.response?.data?.message || "Failed to load monthly collections"
+      );
+    } finally {
+      setCollectionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  useEffect(() => {
+    if (view === "collections" && !collections) {
+      loadMonthlyCollections();
+    }
+  }, [view]);
 
   const summary = useMemo(() => {
     return installments.reduce(
@@ -154,13 +197,36 @@ const Installments = () => {
           </p>
         </div>
 
-        {(selectedCustomer || selectedSale) && (
+        {view === "customers" && (selectedCustomer || selectedSale) ? (
           <button
             onClick={resetSelection}
             className="bg-yellow-500 text-black font-bold px-5 py-3 rounded-xl"
           >
             Back to Customers
           </button>
+        ) : (
+          <div className="flex gap-2 bg-black/60 border border-yellow-600/30 rounded-xl p-1 w-fit">
+            <button
+              onClick={() => setView("customers")}
+              className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                view === "customers"
+                  ? "bg-yellow-500 text-black"
+                  : "text-yellow-300"
+              }`}
+            >
+              Customers
+            </button>
+            <button
+              onClick={() => setView("collections")}
+              className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                view === "collections"
+                  ? "bg-yellow-500 text-black"
+                  : "text-yellow-300"
+              }`}
+            >
+              Monthly Collections
+            </button>
+          </div>
         )}
       </div>
 
@@ -170,6 +236,8 @@ const Installments = () => {
         </div>
       )}
 
+      {view === "customers" && (
+      <>
       {!selectedCustomer && (
         <>
           <h2 className="text-xl font-bold text-white mb-4">
@@ -426,6 +494,128 @@ const Installments = () => {
               </div>
             ))}
           </div>
+        </>
+      )}
+      </>
+      )}
+
+      {view === "collections" && (
+        <>
+          {collectionsLoading ? (
+            <p className="text-yellow-400">Loading monthly collections...</p>
+          ) : !collections || collections.months.length === 0 ? (
+            <p className="text-gray-400">No collections recorded yet.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                <Mini
+                  title="Total Advance"
+                  value={`Rs. ${money(collections.summary.totalAdvance)}`}
+                />
+                <Mini
+                  title="Total Installment"
+                  value={`Rs. ${money(collections.summary.totalInstallment)}`}
+                />
+                <Mini
+                  title="Total Fine"
+                  value={`Rs. ${money(collections.summary.totalFine)}`}
+                />
+                <Mini
+                  title="Total Collected"
+                  value={`Rs. ${money(collections.summary.totalCollected)}`}
+                />
+              </div>
+
+              <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-5 mb-5">
+                <h2 className="text-xl font-bold text-white mb-4">
+                  Collections by Month
+                </h2>
+
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={collections.months.map((m) => ({
+                        ...m,
+                        label: monthLabel(m.month),
+                      }))}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                      <XAxis dataKey="label" stroke="#777" />
+                      <YAxis stroke="#777" />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#090909",
+                          border: "1px solid rgba(250,204,21,0.3)",
+                          borderRadius: 14,
+                          color: "#fff",
+                        }}
+                      />
+                      <Legend />
+                      <Bar dataKey="advance" name="Advance" stackId="a" fill="#facc15" />
+                      <Bar dataKey="installment" name="Installment" stackId="a" fill="#a855f7" />
+                      <Bar dataKey="fine" name="Fine" stackId="a" fill="#ef4444" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="hidden lg:block bg-black/70 border border-yellow-600/30 rounded-2xl overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-yellow-500 text-black">
+                    <tr>
+                      <th className="p-3 text-left">Month</th>
+                      <th className="p-3 text-left">Advance</th>
+                      <th className="p-3 text-left">Installment</th>
+                      <th className="p-3 text-left">Fine</th>
+                      <th className="p-3 text-left">Total</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {collections.months.map((m) => (
+                      <tr
+                        key={m.month}
+                        className="border-t border-yellow-600/20 text-gray-200"
+                      >
+                        <td className="p-3">{monthLabel(m.month)}</td>
+                        <td className="p-3">Rs. {money(m.advance)}</td>
+                        <td className="p-3">Rs. {money(m.installment)}</td>
+                        <td className="p-3 text-orange-300">
+                          Rs. {money(m.fine)}
+                        </td>
+                        <td className="p-3 font-bold text-yellow-300">
+                          Rs. {money(m.total)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="lg:hidden space-y-4">
+                {collections.months.map((m) => (
+                  <div
+                    key={m.month}
+                    className="bg-black/75 border border-yellow-600/30 rounded-2xl p-4"
+                  >
+                    <h3 className="font-bold text-yellow-400 mb-3">
+                      {monthLabel(m.month)}
+                    </h3>
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <Info label="Advance" value={`Rs. ${money(m.advance)}`} />
+                      <Info
+                        label="Installment"
+                        value={`Rs. ${money(m.installment)}`}
+                      />
+                      <Info label="Fine" value={`Rs. ${money(m.fine)}`} />
+                      <Info label="Total" value={`Rs. ${money(m.total)}`} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
 

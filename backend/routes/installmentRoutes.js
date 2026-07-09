@@ -7,6 +7,7 @@ const {
   getInstallmentCustomers,
   getCustomerInstallmentItems,
   getSaleInstallments,
+  getMonthlyCollections,
 } = require("../controllers/installmentController");
 
 const { protect, allowRoles } = require("../middleware/authMiddleware");
@@ -43,6 +44,12 @@ router.get(
   "/overdue",
   allowRoles("admin", "manager", "accounts"),
   getOverdueInstallments
+);
+
+router.get(
+  "/monthly-collections",
+  allowRoles("admin", "manager", "accounts"),
+  getMonthlyCollections
 );
 
 router.put(
