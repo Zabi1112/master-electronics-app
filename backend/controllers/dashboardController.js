@@ -47,6 +47,9 @@ exports.getDashboardStats = async (req, res) => {
 
     const totalExpenses = await sumField(Expense, "amount");
 
+    const totalSpent =
+      Number(totalInventoryPurchased || 0) + Number(totalExpenses || 0);
+
     const totalSales = await sumField(Sale, "finalAmount");
     const cashSales = await sumField(Sale, "finalAmount", { saleType: "cash" });
     const installmentSales = await sumField(Sale, "finalAmount", {
@@ -125,6 +128,7 @@ exports.getDashboardStats = async (req, res) => {
         donationPaid: totalDonationPaid,
         totalExpenses,
         inventoryPurchased: totalInventoryPurchased,
+        totalSpent,
         availableCapital,
         totalRegained,
         netProfitAfterExpenses,

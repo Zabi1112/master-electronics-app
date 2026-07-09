@@ -8,6 +8,7 @@ import {
   CreditCard,
   HandCoins,
   PackageX,
+  Receipt,
   RefreshCcw,
   TrendingUp,
   Wallet,
@@ -156,7 +157,7 @@ const Dashboard = () => {
         initial="hidden"
         animate="show"
         transition={{ staggerChildren: 0.08 }}
-        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 mb-5"
+        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-5 mb-5"
       >
         <MainCard
           icon={Wallet}
@@ -170,6 +171,13 @@ const Dashboard = () => {
           title="Inventory Purchased"
           value={formatMoney(stats.finance?.inventoryPurchased)}
           glow="blue"
+        />
+
+        <MainCard
+          icon={Receipt}
+          title="Total Spent (Inventory + Expenses)"
+          value={formatMoney(stats.finance?.totalSpent)}
+          glow="purple"
         />
 
         <MainCard
