@@ -428,6 +428,204 @@ exports.getCustomerInstallmentItems = async (req, res) => {
   }
 };
 
+// Admin-only fix for a mis-entered payment (wrong amount/fine/date typed in
+// at the time). Unlike payInstallment, this does not re-amortize future
+// installments — it only corrects this installment and the sale's totals,
+// and tells the caller if the future schedule may need a manual look.
+exports.correctInstallment = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const { paidAmount, finePaid, fineDiscount, paidDate, reason } = req.body;
+
+    if (!reason || !String(reason).trim()) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "A reason is required to correct a payment",
+      });
+    }
+
+    const installment = await Installment.findByPk(req.params.id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!installment) {
+      await t.rollback();
+      return res.status(404).json({ message: "Installment not found" });
+    }
+
+    const oldInstallmentSnapshot = installment.toJSON();
+
+    const newPaidAmount =
+      paidAmount !== undefined
+        ? Number(paidAmount)
+        : Number(installment.paidAmount || 0);
+    const newFinePaid =
+      finePaid !== undefined
+        ? Number(finePaid)
+        : Number(installment.finePaid || 0);
+
+    if (newPaidAmount < 0 || newFinePaid < 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Amounts cannot be negative" });
+    }
+
+    if (newPaidAmount > Number(installment.amount || 0)) {
+      await t.rollback();
+      return res.status(400).json({
+        message:
+          "Corrected paid amount cannot exceed this installment's amount. Use the normal Pay flow for overpayments that should roll into future installments.",
+      });
+    }
+
+    const principalDelta = newPaidAmount - Number(installment.paidAmount || 0);
+    const fineDelta = newFinePaid - Number(installment.finePaid || 0);
+
+    installment.paidAmount = newPaidAmount;
+    installment.finePaid = newFinePaid;
+
+    if (fineDiscount !== undefined) {
+      installment.fineDiscount = Number(fineDiscount);
+    }
+
+    installment.remainingAmount = Math.max(
+      0,
+      Number(installment.amount || 0) - newPaidAmount
+    );
+
+    installment.status =
+      installment.remainingAmount <= 0
+        ? "paid"
+        : newPaidAmount > 0
+        ? "partial"
+        : "pending";
+
+    if (paidDate !== undefined) {
+      installment.paidDate = paidDate || null;
+    } else if (installment.status === "paid" && !installment.paidDate) {
+      installment.paidDate = todayDate();
+    } else if (newPaidAmount === 0) {
+      installment.paidDate = null;
+    }
+
+    installment.notes = installment.notes
+      ? `${installment.notes} | Corrected by ${req.user.name}: ${reason}`
+      : `Corrected by ${req.user.name}: ${reason}`;
+
+    await installment.save({ transaction: t });
+
+    const sale = await Sale.findByPk(installment.saleId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!sale) {
+      await t.rollback();
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    const oldSaleSnapshot = sale.toJSON();
+
+    sale.paidAmount = Math.max(0, Number(sale.paidAmount || 0) + principalDelta);
+    sale.remainingAmount = Math.max(
+      0,
+      Number(sale.remainingAmount || 0) - principalDelta
+    );
+
+    const unpaidInstallments = await Installment.count({
+      where: {
+        saleId: sale.id,
+        status: { [Op.in]: ["pending", "partial"] },
+      },
+      transaction: t,
+    });
+
+    if (sale.remainingAmount <= 0 || unpaidInstallments === 0) {
+      sale.remainingAmount = 0;
+      sale.status = "cleared";
+    } else if (sale.status === "cleared") {
+      sale.status = "active";
+    }
+
+    const totalPurchase = Number(sale.purchasePrice || 0);
+    const totalProfit = Number(sale.profit || 0);
+
+    sale.profitRecovered = Math.max(0, sale.paidAmount - totalPurchase);
+    if (sale.profitRecovered > totalProfit) {
+      sale.profitRecovered = totalProfit;
+    }
+    sale.profitPending = Math.max(0, totalProfit - sale.profitRecovered);
+
+    // Heal the cached monthly figure from the untouched future schedule.
+    // Only "pending" (nothing paid yet) installments represent the uniform
+    // recurring amount — a "partial" one (like the installment we may have
+    // just corrected) can carry a one-off amount from an earlier excess
+    // absorption, and averaging it in reintroduces a repeating-decimal
+    // figure instead of the real monthly rate.
+    let scheduleInstallments = await Installment.findAll({
+      where: { saleId: sale.id, status: "pending" },
+      attributes: ["amount"],
+      transaction: t,
+      raw: true,
+    });
+
+    if (scheduleInstallments.length === 0) {
+      scheduleInstallments = await Installment.findAll({
+        where: { saleId: sale.id, status: { [Op.in]: ["pending", "partial"] } },
+        attributes: ["amount"],
+        transaction: t,
+        raw: true,
+      });
+    }
+
+    if (scheduleInstallments.length > 0) {
+      const totalScheduleAmount = scheduleInstallments.reduce(
+        (sum, i) => sum + Number(i.amount || 0),
+        0
+      );
+      sale.monthlyInstallment = totalScheduleAmount / scheduleInstallments.length;
+    }
+
+    await sale.save({ transaction: t });
+
+    await t.commit();
+
+    const description = `Corrected installment #${installment.installmentNo} (sale ${sale.invoiceNo}): paid Rs. ${oldInstallmentSnapshot.paidAmount} → Rs. ${newPaidAmount}, fine Rs. ${oldInstallmentSnapshot.finePaid} → Rs. ${newFinePaid}. Reason: ${reason}`;
+
+    await logActivity({
+      req,
+      action: "correct",
+      module: "installments",
+      recordId: installment.id,
+      description,
+      oldData: { installment: oldInstallmentSnapshot, sale: oldSaleSnapshot },
+      newData: {
+        installment: installment.toJSON(),
+        sale: sale.toJSON(),
+        reason,
+      },
+    });
+
+    res.json({
+      message: "Installment corrected successfully",
+      installment,
+      sale,
+      warning:
+        principalDelta !== 0
+          ? "Sale totals were updated. Future installments were not re-amortized — review the remaining schedule if it should change too."
+          : null,
+    });
+  } catch (error) {
+    await t.rollback();
+
+    res.status(500).json({
+      message: "Correction failed",
+      error: error.message,
+    });
+  }
+};
+
 exports.getMonthlyCollections = async (req, res) => {
   try {
     const { from, to } = req.query; // optional "YYYY-MM" bounds
@@ -469,8 +667,12 @@ exports.getMonthlyCollections = async (req, res) => {
       const key = new Date(log.createdAt).toISOString().slice(0, 7);
       const payment = log.newData?.payment || {};
       const entry = ensureMonth(key);
-      entry.installment += Number(payment.installmentPaid || 0);
-      entry.fine += Number(payment.finePaid || 0);
+      const finePaid = Number(payment.finePaid || 0);
+      // Derive from amount/finePaid rather than the stored installmentPaid
+      // field: older log entries recorded installmentPaid before excess
+      // amounts were folded in, so it under-reports on re-amortized payments.
+      entry.installment += Number(payment.amount || 0) - finePaid;
+      entry.fine += finePaid;
     }
 
     let months = Object.values(monthly)

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { startRequest, endRequest } from "../store/loadingStore";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
@@ -19,13 +20,20 @@ api.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
+  startRequest();
+
   return config;
 });
 
 // Add response error handling for 401 errors
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    endRequest();
+    return response;
+  },
   (error) => {
+    endRequest();
+
     if (error.response?.status === 401) {
       // Clear auth on 401 response
       localStorage.removeItem("master_token");

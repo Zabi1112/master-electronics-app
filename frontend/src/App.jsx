@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext.jsx";
 import ProtectedRoute from "./routes/ProtectedRoute.jsx";
 import MainLayout from "./layouts/MainLayout.jsx";
+import GlobalLoadingBar from "./components/GlobalLoadingBar.jsx";
 
 import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -27,6 +28,7 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <GlobalLoadingBar />
         <Routes>
           <Route path="/login" element={<Login />} />
 

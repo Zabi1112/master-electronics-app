@@ -2,6 +2,7 @@ const express = require("express");
 
 const {
   payInstallment,
+  correctInstallment,
   getPendingInstallments,
   getOverdueInstallments,
   getInstallmentCustomers,
@@ -64,5 +65,7 @@ router.put(
   allowRoles("admin", "manager", "salesman", "accounts"),
   payInstallment
 );
+
+router.put("/:id/correct", allowRoles("admin"), correctInstallment);
 
 module.exports = router;

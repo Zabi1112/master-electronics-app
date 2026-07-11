@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import api from "../api/api";
+import { useAuth } from "../context/AuthContext.jsx";
 import { downloadPdf, printElement } from "../utils/pdfUtils";
 import InstallmentReceiptPrint from "../components/InstallmentReceiptPrint.jsx";
 import DueThisMonthPrint from "../components/DueThisMonthPrint.jsx";
@@ -23,6 +24,9 @@ const monthLabel = (key) => {
 };
 
 const Installments = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const [view, setView] = useState("customers"); // "customers" | "collections"
 
   const [customers, setCustomers] = useState([]);
@@ -51,6 +55,17 @@ const Installments = () => {
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [lastPayment, setLastPayment] = useState(null);
+
+  const [correctionModal, setCorrectionModal] = useState(null);
+  const [correctionForm, setCorrectionForm] = useState({
+    paidAmount: "",
+    finePaid: "",
+    fineDiscount: "",
+    paidDate: "",
+    reason: "",
+  });
+  const [submittingCorrection, setSubmittingCorrection] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -200,6 +215,48 @@ const Installments = () => {
     }
   };
 
+  const openCorrection = (item) => {
+    setCorrectionModal(item);
+    setCorrectionForm({
+      paidAmount: item.paidAmount ?? "",
+      finePaid: item.finePaid ?? "",
+      fineDiscount: item.fineDiscount ?? "",
+      paidDate: item.paidDate || "",
+      reason: "",
+    });
+  };
+
+  const submitCorrection = async (e) => {
+    e.preventDefault();
+    if (submittingCorrection) return;
+
+    setError("");
+    setNotice("");
+    setSubmittingCorrection(true);
+
+    try {
+      const res = await api.put(`/installments/${correctionModal.id}/correct`, {
+        paidAmount: Number(correctionForm.paidAmount || 0),
+        finePaid: Number(correctionForm.finePaid || 0),
+        fineDiscount: Number(correctionForm.fineDiscount || 0),
+        paidDate: correctionForm.paidDate || null,
+        reason: correctionForm.reason,
+      });
+
+      setCorrectionModal(null);
+      setNotice(res.data.warning || "Payment corrected successfully.");
+
+      if (selectedSale) {
+        await loadSaleInstallments(selectedSale);
+        await loadCustomerItems(selectedCustomer);
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || "Correction failed");
+    } finally {
+      setSubmittingCorrection(false);
+    }
+  };
+
   const resetSelection = () => {
     setSelectedCustomer(null);
     setSelectedSale(null);
@@ -265,6 +322,18 @@ const Installments = () => {
       {error && (
         <div className="bg-red-600/20 border border-red-500/40 text-red-300 rounded-xl p-3 mb-4">
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="bg-yellow-600/20 border border-yellow-500/40 text-yellow-300 rounded-xl p-3 mb-4 flex justify-between items-start gap-3">
+          <span>{notice}</span>
+          <button
+            onClick={() => setNotice("")}
+            className="text-yellow-400 font-bold shrink-0"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -455,24 +524,36 @@ const Installments = () => {
                       <Badge status={item.status} />
                     </td>
                     <td className="p-3 text-right">
-                      {item.status !== "paid" ? (
-                        <button
-                          onClick={() => openPayment(item)}
-                          className="bg-yellow-500 text-black px-4 py-2 rounded-lg font-bold"
-                        >
-                          Pay
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setLastPayment(null);
-                            setSelectedReceipt(item);
-                          }}
-                          className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold"
-                        >
-                          Receipt
-                        </button>
-                      )}
+                      <div className="flex justify-end gap-2">
+                        {item.status !== "paid" ? (
+                          <button
+                            onClick={() => openPayment(item)}
+                            className="bg-yellow-500 text-black px-4 py-2 rounded-lg font-bold"
+                          >
+                            Pay
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setLastPayment(null);
+                              setSelectedReceipt(item);
+                            }}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold"
+                          >
+                            Receipt
+                          </button>
+                        )}
+
+                        {isAdmin && Number(item.paidAmount || 0) > 0 && (
+                          <button
+                            onClick={() => openCorrection(item)}
+                            className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold"
+                            title="Admin: correct a mis-entered payment"
+                          >
+                            Correct
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -521,6 +602,15 @@ const Installments = () => {
                     className="mt-4 w-full bg-green-600 text-white py-3 rounded-xl font-bold"
                   >
                     View Receipt
+                  </button>
+                )}
+
+                {isAdmin && Number(item.paidAmount || 0) > 0 && (
+                  <button
+                    onClick={() => openCorrection(item)}
+                    className="mt-2 w-full bg-purple-600 text-white py-3 rounded-xl font-bold"
+                  >
+                    Correct Payment (Admin)
                   </button>
                 )}
               </div>
@@ -729,6 +819,122 @@ const Installments = () => {
                 className="bg-yellow-500 text-black py-3 rounded-xl font-bold disabled:opacity-50"
               >
                 {submittingPayment ? "Saving..." : "Save Payment"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {correctionModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
+          <form
+            onSubmit={submitCorrection}
+            className="w-full max-w-lg bg-[#0b0b0b] border border-purple-600/40 rounded-3xl p-5"
+          >
+            <h2 className="text-xl font-bold text-purple-400 mb-2">
+              Correct Payment (Admin)
+            </h2>
+
+            <p className="text-sm text-gray-400 mb-5">
+              Installment #{correctionModal.installmentNo} — fixes a
+              mis-entered payment. This updates the sale's totals but does not
+              re-amortize future installments.
+            </p>
+
+            <label className="block text-xs text-gray-400 mb-1">
+              Paid Amount
+            </label>
+            <input
+              type="number"
+              className="w-full px-4 py-3 rounded-xl bg-white mb-3"
+              value={correctionForm.paidAmount}
+              onChange={(e) =>
+                setCorrectionForm({
+                  ...correctionForm,
+                  paidAmount: e.target.value,
+                })
+              }
+              required
+            />
+
+            <label className="block text-xs text-gray-400 mb-1">
+              Fine Paid
+            </label>
+            <input
+              type="number"
+              className="w-full px-4 py-3 rounded-xl bg-white mb-3"
+              value={correctionForm.finePaid}
+              onChange={(e) =>
+                setCorrectionForm({
+                  ...correctionForm,
+                  finePaid: e.target.value,
+                })
+              }
+            />
+
+            <label className="block text-xs text-gray-400 mb-1">
+              Fine Discount
+            </label>
+            <input
+              type="number"
+              className="w-full px-4 py-3 rounded-xl bg-white mb-3"
+              value={correctionForm.fineDiscount}
+              onChange={(e) =>
+                setCorrectionForm({
+                  ...correctionForm,
+                  fineDiscount: e.target.value,
+                })
+              }
+            />
+
+            <label className="block text-xs text-gray-400 mb-1">
+              Paid Date
+            </label>
+            <input
+              type="date"
+              className="w-full px-4 py-3 rounded-xl bg-white mb-3"
+              value={correctionForm.paidDate}
+              onChange={(e) =>
+                setCorrectionForm({
+                  ...correctionForm,
+                  paidDate: e.target.value,
+                })
+              }
+            />
+
+            <label className="block text-xs text-gray-400 mb-1">
+              Reason (required, saved to audit log)
+            </label>
+            <textarea
+              className="w-full px-4 py-3 rounded-xl bg-white"
+              placeholder="e.g. Cashier typed 2318.18 instead of 2500"
+              rows="3"
+              value={correctionForm.reason}
+              onChange={(e) =>
+                setCorrectionForm({
+                  ...correctionForm,
+                  reason: e.target.value,
+                })
+              }
+              required
+            />
+
+            <div className="grid grid-cols-2 gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setCorrectionModal(null)}
+                disabled={submittingCorrection}
+                className="bg-gray-700 text-white py-3 rounded-xl font-bold disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={submittingCorrection}
+                className="bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-xl font-bold disabled:opacity-50"
+              >
+                {submittingCorrection ? "Saving..." : "Save Correction"}
               </button>
             </div>
           </form>
