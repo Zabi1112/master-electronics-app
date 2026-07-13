@@ -55,6 +55,8 @@ const Installments = () => {
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [lastPayment, setLastPayment] = useState(null);
+  const [whatsappStatus, setWhatsappStatus] = useState(null);
+  const [resendingWhatsapp, setResendingWhatsapp] = useState(false);
 
   const [correctionModal, setCorrectionModal] = useState(null);
   const [correctionForm, setCorrectionForm] = useState({
@@ -201,6 +203,7 @@ const Installments = () => {
       });
 
       setPaymentModal(null);
+      setWhatsappStatus(res.data.whatsapp || null);
 
       if (selectedSale) {
         await loadSaleInstallments(selectedSale);
@@ -212,6 +215,24 @@ const Installments = () => {
       setError(err.response?.data?.message || "Payment failed");
     } finally {
       setSubmittingPayment(false);
+    }
+  };
+
+  const resendWhatsappReceipt = async () => {
+    if (!selectedReceipt || resendingWhatsapp) return;
+
+    setResendingWhatsapp(true);
+    try {
+      const res = await api.post(
+        `/installments/${selectedReceipt.id}/send-whatsapp`
+      );
+      setWhatsappStatus(res.data.whatsapp);
+    } catch (err) {
+      setWhatsappStatus(
+        err.response?.data?.whatsapp || { sent: false, error: "Resend failed" }
+      );
+    } finally {
+      setResendingWhatsapp(false);
     }
   };
 
@@ -536,6 +557,7 @@ const Installments = () => {
                           <button
                             onClick={() => {
                               setLastPayment(null);
+                              setWhatsappStatus(null);
                               setSelectedReceipt(item);
                             }}
                             className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold"
@@ -597,6 +619,7 @@ const Installments = () => {
                   <button
                     onClick={() => {
                       setLastPayment(null);
+                      setWhatsappStatus(null);
                       setSelectedReceipt(item);
                     }}
                     className="mt-4 w-full bg-green-600 text-white py-3 rounded-xl font-bold"
@@ -975,12 +998,38 @@ const Installments = () => {
                   onClick={() => {
                     setSelectedReceipt(null);
                     setLastPayment(null);
+                    setWhatsappStatus(null);
                   }}
                   className="bg-gray-700 text-white px-4 py-2 rounded-xl font-bold"
                 >
                   Close
                 </button>
               </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              {whatsappStatus?.sent && (
+                <span className="text-green-400 text-sm font-semibold">
+                  ✓ Receipt sent via WhatsApp
+                </span>
+              )}
+              {whatsappStatus && !whatsappStatus.sent && (
+                <span className="text-red-400 text-sm">
+                  Couldn't send via WhatsApp
+                  {whatsappStatus.error ? `: ${whatsappStatus.error}` : ""}
+                </span>
+              )}
+              <button
+                onClick={resendWhatsappReceipt}
+                disabled={resendingWhatsapp}
+                className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-xl font-bold text-sm disabled:opacity-50"
+              >
+                {resendingWhatsapp
+                  ? "Sending..."
+                  : whatsappStatus?.sent
+                  ? "Resend via WhatsApp"
+                  : "Send via WhatsApp"}
+              </button>
             </div>
 
             <InstallmentReceiptPrint

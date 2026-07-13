@@ -3,6 +3,9 @@ const sequelize = getSequelize();
 const { Op } = require("sequelize");
 const { Product, Sale, Installment, Customer, User } = require("../models");
 const logActivity = require("../utils/activityLogger");
+const {
+  sendInstallmentReceiptWhatsApp,
+} = require("../services/receiptNotifier");
 
 const generateInvoiceNo = () => {
   return `ME-${Date.now()}`;
@@ -242,11 +245,13 @@ exports.createSale = async (req, res) => {
 
     await product.save({ transaction: t });
 
+    let advanceInstallment = null;
+
     if (saleType === "installment") {
       const startDate =
         installmentStartDate || new Date().toISOString().split("T")[0];
 
-      await Installment.create(
+      advanceInstallment = await Installment.create(
         {
           saleId: sale.id,
           customerId,
@@ -301,9 +306,14 @@ exports.createSale = async (req, res) => {
       newData: sale.toJSON(),
     });
 
+    const whatsapp = advanceInstallment
+      ? await sendInstallmentReceiptWhatsApp(advanceInstallment.id, { req })
+      : null;
+
     res.status(201).json({
       message: "Sale created successfully",
       sale,
+      whatsapp,
     });
   } catch (error) {
     await t.rollback();

@@ -36,6 +36,7 @@ const Sales = () => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [whatsappNotice, setWhatsappNotice] = useState("");
 
   const loadData = async () => {
     setLoading(true);
@@ -226,11 +227,21 @@ const Sales = () => {
                 new Date().toISOString().split("T")[0],
             };
 
-      await api.post("/sales", payload);
+      const res = await api.post("/sales", payload);
 
       setForm(emptyForm);
       setFormOpen(false);
       loadData();
+
+      if (payload.saleType === "installment") {
+        setWhatsappNotice(
+          res.data.whatsapp?.sent
+            ? "Advance receipt sent to customer via WhatsApp."
+            : `Advance receipt was not sent via WhatsApp${
+                res.data.whatsapp?.error ? `: ${res.data.whatsapp.error}` : ""
+              }. You can resend it from the Installments page.`
+        );
+      }
     } catch (err) {
       setError(err.response?.data?.message || "Create sale failed");
     }
@@ -259,6 +270,18 @@ const Sales = () => {
       {error && (
         <div className="bg-red-600/20 border border-red-500/40 text-red-300 rounded-xl p-3 mb-4">
           {error}
+        </div>
+      )}
+
+      {whatsappNotice && (
+        <div className="bg-yellow-600/20 border border-yellow-500/40 text-yellow-300 rounded-xl p-3 mb-4 flex justify-between items-start gap-3">
+          <span>{whatsappNotice}</span>
+          <button
+            onClick={() => setWhatsappNotice("")}
+            className="text-yellow-400 font-bold shrink-0"
+          >
+            ×
+          </button>
         </div>
       )}
 

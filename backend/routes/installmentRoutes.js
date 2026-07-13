@@ -10,6 +10,7 @@ const {
   getSaleInstallments,
   getMonthlyCollections,
   getDueThisMonth,
+  resendReceiptWhatsApp,
 } = require("../controllers/installmentController");
 
 const { protect, allowRoles } = require("../middleware/authMiddleware");
@@ -67,5 +68,11 @@ router.put(
 );
 
 router.put("/:id/correct", allowRoles("admin"), correctInstallment);
+
+router.post(
+  "/:id/send-whatsapp",
+  allowRoles("admin", "manager", "salesman", "accounts"),
+  resendReceiptWhatsApp
+);
 
 module.exports = router;

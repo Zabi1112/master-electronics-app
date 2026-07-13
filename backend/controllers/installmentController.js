@@ -2,6 +2,9 @@ const { Op } = require("sequelize");
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
 const logActivity = require("../utils/activityLogger");
+const {
+  sendInstallmentReceiptWhatsApp,
+} = require("../services/receiptNotifier");
 
 const {
   Sale,
@@ -264,6 +267,10 @@ exports.payInstallment = async (req, res) => {
       },
     });
 
+    const whatsapp = await sendInstallmentReceiptWhatsApp(installment.id, {
+      req,
+    });
+
     res.json({
       message: "Installment payment received successfully",
       totalPayable,
@@ -276,6 +283,7 @@ exports.payInstallment = async (req, res) => {
       updatedFutureInstallments: futureInstallments,
       installment,
       sale,
+      whatsapp,
     });
   } catch (error) {
     await t.rollback();
@@ -285,6 +293,23 @@ exports.payInstallment = async (req, res) => {
       error: error.message,
     });
   }
+};
+
+// Retries sending the WhatsApp receipt for an already-paid installment
+// (e.g. the automatic send after payment failed due to a transient issue).
+exports.resendReceiptWhatsApp = async (req, res) => {
+  const whatsapp = await sendInstallmentReceiptWhatsApp(req.params.id, {
+    req,
+  });
+
+  if (!whatsapp.sent) {
+    return res.status(502).json({
+      message: "Failed to send WhatsApp receipt",
+      whatsapp,
+    });
+  }
+
+  res.json({ message: "WhatsApp receipt sent", whatsapp });
 };
 
 exports.getPendingInstallments = async (req, res) => {
