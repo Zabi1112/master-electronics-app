@@ -19,9 +19,24 @@ const run = async () => {
   const commit = process.argv.includes("--commit");
 
   await sequelize.authenticate();
-  const { Partner, PartnerTransaction, Product, Expense } = require("../models");
+  const { Partner, PartnerTransaction, Product, Expense, Sale } = require("../models");
 
   const { Op } = require("sequelize");
+
+  // Product.quantity is REMAINING stock (decremented on every sale), not the
+  // original quantity bought — so the true amount ever invested in a product
+  // is its current in-stock value plus whatever has already been sold, whose
+  // cost basis lives on Sale.purchasePrice instead of the Product row.
+  const productAmount = async (product) => {
+    const soldCost = await Sale.sum("purchasePrice", {
+      where: { productId: product.id },
+    });
+
+    return (
+      Number(product.purchasePrice || 0) * Number(product.quantity || 0) +
+      Number(soldCost || 0)
+    );
+  };
 
   const matches = await Partner.findAll({
     where: { name: { [Op.iLike]: "%warraich%" } },
@@ -42,10 +57,8 @@ const run = async () => {
   const products = await Product.findAll({ where: { fundingSource: null } });
   const expenses = await Expense.findAll({ where: { fundingSource: null } });
 
-  const productTotal = products.reduce(
-    (sum, p) => sum + Number(p.purchasePrice || 0) * Number(p.quantity || 1),
-    0
-  );
+  const productAmounts = await Promise.all(products.map(productAmount));
+  const productTotal = productAmounts.reduce((sum, a) => sum + a, 0);
   const expenseTotal = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
   console.log(`Partner: ${zabi.name} (id ${zabi.id})`);
@@ -64,7 +77,7 @@ const run = async () => {
     const { recalculatePartnerBalance } = require("../controllers/partnerController");
 
     for (const product of products) {
-      const amount = Number(product.purchasePrice || 0) * Number(product.quantity || 1);
+      const amount = await productAmount(product);
 
       if (amount > 0) {
         const trx = await PartnerTransaction.create(
