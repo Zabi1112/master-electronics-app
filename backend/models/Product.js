@@ -21,6 +21,13 @@ module.exports = (sequelize) => {
       },
       notes: { type: DataTypes.TEXT, allowNull: true },
       addedBy: { type: DataTypes.INTEGER, allowNull: true },
+      fundingSource: {
+        type: DataTypes.ENUM("partner", "shop"),
+        allowNull: true,
+      },
+      partnerId: { type: DataTypes.INTEGER, allowNull: true },
+      partnerTransactionId: { type: DataTypes.INTEGER, allowNull: true },
+      shopTransactionId: { type: DataTypes.INTEGER, allowNull: true },
     },
     { tableName: "products", timestamps: true }
   );

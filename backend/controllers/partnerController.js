@@ -48,6 +48,8 @@ const recalculatePartnerBalance = async (partnerId, transaction = null) => {
     return partner;
 };
 
+exports.recalculatePartnerBalance = recalculatePartnerBalance;
+
 exports.createPartner = async (req, res) => {
     try {
         const partner = await Partner.create({

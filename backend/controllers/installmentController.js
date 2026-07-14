@@ -10,7 +10,9 @@ const {
   User,
   Product,
   ActivityLog,
+  ShopTransaction,
 } = require("../models");
+const { recalculateShopBalance } = require("./shopAccountController");
 
 const todayDate = () => new Date().toISOString().split("T")[0];
 
@@ -236,6 +238,40 @@ exports.payInstallment = async (req, res) => {
     }
 
     await sale.save({ transaction: t });
+
+    if (installmentPaidNow > 0) {
+      await ShopTransaction.create(
+        {
+          type: "collection",
+          sourceType: "installment_payment",
+          sourceId: installment.id,
+          amount: installmentPaidNow,
+          description: `Installment #${installment.installmentNo} payment - invoice ${sale.invoiceNo}`,
+          transactionDate: todayDate(),
+          createdBy: req.user.id,
+        },
+        { transaction: t }
+      );
+    }
+
+    if (finePaidNow > 0) {
+      await ShopTransaction.create(
+        {
+          type: "collection",
+          sourceType: "fine_payment",
+          sourceId: installment.id,
+          amount: finePaidNow,
+          description: `Installment #${installment.installmentNo} fine payment - invoice ${sale.invoiceNo}`,
+          transactionDate: todayDate(),
+          createdBy: req.user.id,
+        },
+        { transaction: t }
+      );
+    }
+
+    if (installmentPaidNow > 0 || finePaidNow > 0) {
+      await recalculateShopBalance(t);
+    }
 
     await t.commit();
 

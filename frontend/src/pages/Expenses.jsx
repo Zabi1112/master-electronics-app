@@ -10,6 +10,8 @@ const emptyForm = {
   expenseDate: new Date().toISOString().split("T")[0],
   paymentMethod: "cash",
   notes: "",
+  fundingSource: "",
+  partnerId: "",
 };
 
 const categories = [
@@ -29,6 +31,7 @@ const paymentMethods = ["cash", "bank", "easypaisa", "jazzcash", "other"];
 const Expenses = () => {
   const [expenses, setExpenses] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [partners, setPartners] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
 
@@ -57,13 +60,15 @@ const Expenses = () => {
       if (filters.paymentMethod)
         params.append("paymentMethod", filters.paymentMethod);
 
-      const [expensesRes, summaryRes] = await Promise.all([
+      const [expensesRes, summaryRes, partnersRes] = await Promise.all([
         api.get(`/expenses?${params.toString()}`),
         api.get("/expenses/summary"),
+        api.get("/partners"),
       ]);
 
       setExpenses(expensesRes.data.expenses || []);
       setSummary(summaryRes.data);
+      setPartners(partnersRes.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load expenses");
     } finally {
@@ -110,10 +115,16 @@ const Expenses = () => {
     e.preventDefault();
     setError("");
 
+    if (!form.fundingSource) {
+      setError("Please select who funded this expense");
+      return;
+    }
+
     try {
       const payload = {
         ...form,
         amount: Number(form.amount || 0),
+        partnerId: form.fundingSource === "partner" ? form.partnerId : null,
       };
 
       if (editingId) {
@@ -141,6 +152,8 @@ const Expenses = () => {
         expense.expenseDate || new Date().toISOString().split("T")[0],
       paymentMethod: expense.paymentMethod || "cash",
       notes: expense.notes || "",
+      fundingSource: expense.fundingSource || "",
+      partnerId: expense.partnerId || "",
     });
     setFormOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -150,6 +163,16 @@ const Expenses = () => {
     setEditingId(null);
     setForm(emptyForm);
     setFormOpen(false);
+  };
+
+  const fundingLabel = (expense) => {
+    if (expense.fundingSource === "partner") {
+      return expense.fundingPartner?.name || "Partner";
+    }
+    if (expense.fundingSource === "shop") {
+      return "Shop";
+    }
+    return "-";
   };
 
   const deleteExpense = async (id) => {
@@ -262,6 +285,39 @@ const Expenses = () => {
                 </option>
               ))}
             </select>
+
+            <select
+              className="px-4 py-3 rounded-xl bg-white"
+              value={form.fundingSource}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  fundingSource: e.target.value,
+                  partnerId: e.target.value === "shop" ? "" : form.partnerId,
+                })
+              }
+              required
+            >
+              <option value="">Funded By...</option>
+              <option value="partner">Partner</option>
+              <option value="shop">Shop (Recovered Money)</option>
+            </select>
+
+            {form.fundingSource === "partner" && (
+              <select
+                className="px-4 py-3 rounded-xl bg-white"
+                value={form.partnerId}
+                onChange={(e) => setForm({ ...form, partnerId: e.target.value })}
+                required
+              >
+                <option value="">Select Partner...</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
 
             <textarea
               className="px-4 py-3 rounded-xl bg-white md:col-span-2 xl:col-span-3"
@@ -397,6 +453,7 @@ const Expenses = () => {
                   <th className="p-3 text-left">Title</th>
                   <th className="p-3 text-left">Category</th>
                   <th className="p-3 text-left">Payment</th>
+                  <th className="p-3 text-left">Funded By</th>
                   <th className="p-3 text-right">Amount</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
@@ -419,6 +476,7 @@ const Expenses = () => {
                     </td>
                     <td className="p-3 capitalize">{expense.category}</td>
                     <td className="p-3 capitalize">{expense.paymentMethod}</td>
+                    <td className="p-3 text-sm">{fundingLabel(expense)}</td>
                     <td className="p-3 text-right font-bold">
                       Rs. {money(expense.amount)}
                     </td>
@@ -470,6 +528,7 @@ const Expenses = () => {
                     label="Created By"
                     value={expense.createdUser?.name || "-"}
                   />
+                  <Info label="Funded By" value={fundingLabel(expense)} />
                   <Info label="Notes" value={expense.notes || "-"} />
                 </div>
 

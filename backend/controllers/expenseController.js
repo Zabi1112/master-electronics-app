@@ -1,6 +1,13 @@
 const { Op, fn, col } = require("sequelize");
-const { Expense, User } = require("../models");
+const { getSequelize } = require("../config/db");
+const sequelize = getSequelize();
+const { Expense, User, Partner } = require("../models");
 const logActivity = require("../utils/activityLogger");
+const { createFundingEntry, removeFundingEntry } = require("../utils/fundingLedger");
+
+const fundingInclude = [
+    { model: Partner, as: "fundingPartner", attributes: ["id", "name"] },
+];
 
 const buildExpenseWhere = (query) => {
     const { from, to, category, paymentMethod } = query;
@@ -35,27 +42,76 @@ const sumExpenses = async (where = {}) => {
 };
 
 exports.createExpense = async (req, res) => {
+    const t = await sequelize.transaction();
+
     try {
-        const { title, category, amount, expenseDate, paymentMethod, notes } =
-            req.body;
+        const {
+            title,
+            category,
+            amount,
+            expenseDate,
+            paymentMethod,
+            notes,
+            fundingSource,
+            partnerId,
+        } = req.body;
 
         if (!title) {
+            await t.rollback();
             return res.status(400).json({ message: "Expense title is required" });
         }
 
         if (!amount || Number(amount) <= 0) {
+            await t.rollback();
             return res.status(400).json({ message: "Valid amount is required" });
         }
 
-        const expense = await Expense.create({
-            title,
-            category,
-            amount: Number(amount),
-            expenseDate: expenseDate || new Date().toISOString().split("T")[0],
-            paymentMethod,
-            notes,
-            createdBy: req.user.id,
-        });
+        if (fundingSource && !["partner", "shop"].includes(fundingSource)) {
+            await t.rollback();
+            return res.status(400).json({ message: "Invalid funding source" });
+        }
+
+        if (fundingSource === "partner" && !partnerId) {
+            await t.rollback();
+            return res.status(400).json({
+                message: "Partner is required when funding source is 'partner'",
+            });
+        }
+
+        const expense = await Expense.create(
+            {
+                title,
+                category,
+                amount: Number(amount),
+                expenseDate: expenseDate || new Date().toISOString().split("T")[0],
+                paymentMethod,
+                notes,
+                createdBy: req.user.id,
+                fundingSource: fundingSource || null,
+                partnerId: fundingSource === "partner" ? partnerId : null,
+            },
+            { transaction: t }
+        );
+
+        if (fundingSource) {
+            const { partnerTransactionId, shopTransactionId } = await createFundingEntry({
+                fundingSource,
+                partnerId,
+                amount: Number(amount),
+                description: `Expense: ${expense.title}`,
+                transactionDate: expense.expenseDate,
+                sourceType: "expense",
+                sourceId: expense.id,
+                createdBy: req.user.id,
+                transaction: t,
+            });
+
+            expense.partnerTransactionId = partnerTransactionId;
+            expense.shopTransactionId = shopTransactionId;
+            await expense.save({ transaction: t });
+        }
+
+        await t.commit();
 
         res.status(201).json({
             message: "Expense created successfully",
@@ -70,6 +126,8 @@ exports.createExpense = async (req, res) => {
             newData: expense.toJSON(),
         });
     } catch (error) {
+        await t.rollback();
+
         res.status(500).json({
             message: "Create expense failed",
             error: error.message,
@@ -89,6 +147,7 @@ exports.getExpenses = async (req, res) => {
                     as: "createdUser",
                     attributes: ["id", "name", "username", "role"],
                 },
+                ...fundingInclude,
             ],
             order: [["expenseDate", "DESC"]],
         });
@@ -117,6 +176,7 @@ exports.getExpenseById = async (req, res) => {
                     as: "createdUser",
                     attributes: ["id", "name", "username", "role"],
                 },
+                ...fundingInclude,
             ],
         });
 
@@ -134,26 +194,105 @@ exports.getExpenseById = async (req, res) => {
 };
 
 exports.updateExpense = async (req, res) => {
+    const t = await sequelize.transaction();
+
     try {
-        const expense = await Expense.findByPk(req.params.id);
+        const expense = await Expense.findByPk(req.params.id, { transaction: t });
 
         if (!expense) {
+            await t.rollback();
             return res.status(404).json({ message: "Expense not found" });
         }
 
         const oldData = expense.toJSON();
 
-        const { title, category, amount, expenseDate, paymentMethod, notes } =
-            req.body;
+        const {
+            title,
+            category,
+            amount,
+            expenseDate,
+            paymentMethod,
+            notes,
+            fundingSource,
+            partnerId,
+        } = req.body;
 
-        await expense.update({
-            title: title ?? expense.title,
-            category: category ?? expense.category,
-            amount: amount !== undefined ? Number(amount) : expense.amount,
-            expenseDate: expenseDate ?? expense.expenseDate,
-            paymentMethod: paymentMethod ?? expense.paymentMethod,
-            notes: notes ?? expense.notes,
-        });
+        const touchesFunding =
+            fundingSource !== undefined ||
+            partnerId !== undefined ||
+            amount !== undefined;
+
+        const nextFundingSource =
+            fundingSource !== undefined ? fundingSource : oldData.fundingSource;
+
+        if (nextFundingSource && !["partner", "shop"].includes(nextFundingSource)) {
+            await t.rollback();
+            return res.status(400).json({ message: "Invalid funding source" });
+        }
+
+        const nextPartnerId =
+            partnerId !== undefined ? partnerId : oldData.partnerId;
+
+        if (nextFundingSource === "partner" && !nextPartnerId) {
+            await t.rollback();
+            return res.status(400).json({
+                message: "Partner is required when funding source is 'partner'",
+            });
+        }
+
+        let linkedIds = {
+            partnerTransactionId: oldData.partnerTransactionId,
+            shopTransactionId: oldData.shopTransactionId,
+        };
+
+        if (touchesFunding && oldData.fundingSource) {
+            await removeFundingEntry({
+                partnerId: oldData.partnerId,
+                partnerTransactionId: oldData.partnerTransactionId,
+                shopTransactionId: oldData.shopTransactionId,
+                transaction: t,
+            });
+
+            linkedIds = { partnerTransactionId: null, shopTransactionId: null };
+        }
+
+        const nextAmount = amount !== undefined ? Number(amount) : expense.amount;
+
+        await expense.update(
+            {
+                title: title ?? expense.title,
+                category: category ?? expense.category,
+                amount: nextAmount,
+                expenseDate: expenseDate ?? expense.expenseDate,
+                paymentMethod: paymentMethod ?? expense.paymentMethod,
+                notes: notes ?? expense.notes,
+                fundingSource: nextFundingSource || null,
+                partnerId: nextFundingSource === "partner" ? nextPartnerId : null,
+                partnerTransactionId: linkedIds.partnerTransactionId,
+                shopTransactionId: linkedIds.shopTransactionId,
+            },
+            { transaction: t }
+        );
+
+        if (touchesFunding && nextFundingSource && nextAmount > 0) {
+            const { partnerTransactionId, shopTransactionId } = await createFundingEntry({
+                fundingSource: nextFundingSource,
+                partnerId: nextPartnerId,
+                amount: nextAmount,
+                description: `Expense: ${expense.title}`,
+                transactionDate: expense.expenseDate,
+                sourceType: "expense",
+                sourceId: expense.id,
+                createdBy: req.user.id,
+                transaction: t,
+            });
+
+            expense.partnerTransactionId = partnerTransactionId;
+            expense.shopTransactionId = shopTransactionId;
+            await expense.save({ transaction: t });
+        }
+
+        await t.commit();
 
         await logActivity({
             req,
@@ -171,6 +310,8 @@ exports.updateExpense = async (req, res) => {
         });
 
     } catch (error) {
+        await t.rollback();
+
         res.status(500).json({
             message: "Update expense failed",
             error: error.message,
@@ -179,23 +320,35 @@ exports.updateExpense = async (req, res) => {
 };
 
 exports.deleteExpense = async (req, res) => {
+    const t = await sequelize.transaction();
+
     try {
-        const expense = await Expense.findByPk(req.params.id);
+        const expense = await Expense.findByPk(req.params.id, { transaction: t });
 
         if (!expense) {
+            await t.rollback();
             return res.status(404).json({ message: "Expense not found" });
         }
         const oldData = expense.toJSON();
 
-        await expense.destroy();
+        await removeFundingEntry({
+            partnerId: oldData.partnerId,
+            partnerTransactionId: oldData.partnerTransactionId,
+            shopTransactionId: oldData.shopTransactionId,
+            transaction: t,
+        });
+
+        await expense.destroy({ transaction: t });
+
+        await t.commit();
 
         await logActivity({
             req,
             action: "delete",
             module: "expenses",
-            recordId: expense.id,
-            description: `Deleted expense: ${expense.title}`,
-            oldData: expense.toJSON(),
+            recordId: oldData.id,
+            description: `Deleted expense: ${oldData.title}`,
+            oldData,
         });
 
         res.json({
@@ -203,6 +356,8 @@ exports.deleteExpense = async (req, res) => {
         });
 
     } catch (error) {
+        await t.rollback();
+
         res.status(500).json({
             message: "Delete expense failed",
             error: error.message,

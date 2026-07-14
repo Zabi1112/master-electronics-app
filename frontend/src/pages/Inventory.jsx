@@ -15,10 +15,13 @@ const emptyForm = {
   warrantyInfo: "",
   status: "in_stock",
   notes: "",
+  fundingSource: "",
+  partnerId: "",
 };
 
 const Inventory = () => {
   const [products, setProducts] = useState([]);
+  const [partners, setPartners] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
 
@@ -37,8 +40,12 @@ const Inventory = () => {
     setError("");
 
     try {
-      const res = await api.get("/products");
-      setProducts(res.data);
+      const [productsRes, partnersRes] = await Promise.all([
+        api.get("/products"),
+        api.get("/partners"),
+      ]);
+      setProducts(productsRes.data);
+      setPartners(partnersRes.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load inventory");
     } finally {
@@ -115,6 +122,11 @@ const Inventory = () => {
     e.preventDefault();
     setError("");
 
+    if (!form.fundingSource) {
+      setError("Please select who funded this purchase");
+      return;
+    }
+
     try {
       const payload = {
         ...form,
@@ -122,6 +134,7 @@ const Inventory = () => {
         salePrice: Number(form.salePrice || 0),
         quantity: Number(form.quantity || 0),
         lowStockAlertQty: Number(form.lowStockAlertQty || 1),
+        partnerId: form.fundingSource === "partner" ? form.partnerId : null,
       };
 
       if (editingId) {
@@ -155,6 +168,8 @@ const Inventory = () => {
       warrantyInfo: product.warrantyInfo || "",
       status: product.status || "in_stock",
       notes: product.notes || "",
+      fundingSource: product.fundingSource || "",
+      partnerId: product.partnerId || "",
     });
 
     setFormOpen(true);
@@ -204,6 +219,16 @@ const Inventory = () => {
         In Stock
       </span>
     );
+  };
+
+  const fundingLabel = (product) => {
+    if (product.fundingSource === "partner") {
+      return product.fundingPartner?.name || "Partner";
+    }
+    if (product.fundingSource === "shop") {
+      return "Shop";
+    }
+    return "-";
   };
 
   return (
@@ -420,6 +445,41 @@ const Inventory = () => {
               <option value="damaged">Damaged</option>
             </select>
 
+            <select
+              name="fundingSource"
+              className="px-4 py-3 rounded-xl bg-white"
+              value={form.fundingSource}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  fundingSource: e.target.value,
+                  partnerId: e.target.value === "shop" ? "" : form.partnerId,
+                })
+              }
+              required
+            >
+              <option value="">Funded By...</option>
+              <option value="partner">Partner</option>
+              <option value="shop">Shop (Recovered Money)</option>
+            </select>
+
+            {form.fundingSource === "partner" && (
+              <select
+                name="partnerId"
+                className="px-4 py-3 rounded-xl bg-white"
+                value={form.partnerId}
+                onChange={handleChange}
+                required
+              >
+                <option value="">Select Partner...</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <textarea
               name="notes"
               className="px-4 py-3 rounded-xl bg-white md:col-span-2 xl:col-span-3"
@@ -466,6 +526,7 @@ const Inventory = () => {
                   <th className="p-3 text-left">Sale</th>
                   <th className="p-3 text-left">Qty</th>
                   <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-left">Funded By</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -504,6 +565,8 @@ const Inventory = () => {
                     <td className="p-3">{product.quantity}</td>
 
                     <td className="p-3">{getStockBadge(product)}</td>
+
+                    <td className="p-3 text-sm">{fundingLabel(product)}</td>
 
                     <td className="p-3 text-right">
                       <button
@@ -562,6 +625,7 @@ const Inventory = () => {
                   />
                   <Info label="Serial" value={product.serialNumber || "-"} />
                   <Info label="IMEI" value={product.imeiNumber || "-"} />
+                  <Info label="Funded By" value={fundingLabel(product)} />
                 </div>
 
                 {product.warrantyInfo && (

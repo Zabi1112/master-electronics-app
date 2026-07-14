@@ -10,6 +10,8 @@ const SaleReturn = require("./SaleReturn")(sequelize);
 const Installment = require("./Installment")(sequelize);
 const Partner = require("./Partner")(sequelize);
 const PartnerTransaction = require("./PartnerTransaction")(sequelize);
+const ShopAccount = require("./ShopAccount")(sequelize);
+const ShopTransaction = require("./ShopTransaction")(sequelize);
 const BusinessSetting = require("./BusinessSetting")(sequelize);
 const DonationRecord = require("./DonationRecord")(sequelize);
 const Expense = require("./Expense")(sequelize);
@@ -48,6 +50,30 @@ Installment.belongsTo(User, { foreignKey: "receivedBy", as: "receiver" });
 PartnerTransaction.belongsTo(Partner, { foreignKey: "partnerId", as: "partner" });
 PartnerTransaction.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
 
+// Shop account relations
+ShopTransaction.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
+
+// Product/Expense funding source relations
+Product.belongsTo(Partner, { foreignKey: "partnerId", as: "fundingPartner" });
+Product.belongsTo(PartnerTransaction, {
+  foreignKey: "partnerTransactionId",
+  as: "partnerTransaction",
+});
+Product.belongsTo(ShopTransaction, {
+  foreignKey: "shopTransactionId",
+  as: "shopTransaction",
+});
+
+Expense.belongsTo(Partner, { foreignKey: "partnerId", as: "fundingPartner" });
+Expense.belongsTo(PartnerTransaction, {
+  foreignKey: "partnerTransactionId",
+  as: "partnerTransaction",
+});
+Expense.belongsTo(ShopTransaction, {
+  foreignKey: "shopTransactionId",
+  as: "shopTransaction",
+});
+
 // Donation relations
 DonationRecord.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
 DonationRecord.belongsTo(User, { foreignKey: "markedPaidBy", as: "paidByUser" });
@@ -68,6 +94,8 @@ module.exports = {
   Installment,
   Partner,
   PartnerTransaction,
+  ShopAccount,
+  ShopTransaction,
   BusinessSetting,
   DonationRecord,
   Expense,

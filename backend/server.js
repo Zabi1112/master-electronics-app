@@ -57,6 +57,7 @@ const registerRoutes = () => {
   const saleRoutes = require("./routes/saleRoutes");
   const installmentRoutes = require("./routes/installmentRoutes");
   const partnerRoutes = require("./routes/partnerRoutes");
+  const shopAccountRoutes = require("./routes/shopAccountRoutes");
   const dashboardRoutes = require("./routes/dashboardRoutes");
   const reportRoutes = require("./routes/reportRoutes");
   const financeRoutes = require("./routes/financeRoutes");
@@ -72,6 +73,7 @@ const registerRoutes = () => {
   app.use("/api/returns", returnRoutes);
   app.use("/api/installments", installmentRoutes);
   app.use("/api/partners", partnerRoutes);
+  app.use("/api/shop-account", shopAccountRoutes);
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/reports", reportRoutes);
   app.use("/api/finance", financeRoutes);

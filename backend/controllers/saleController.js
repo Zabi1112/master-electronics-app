@@ -1,8 +1,9 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
 const { Op } = require("sequelize");
-const { Product, Sale, Installment, Customer, User } = require("../models");
+const { Product, Sale, Installment, Customer, User, ShopTransaction } = require("../models");
 const logActivity = require("../utils/activityLogger");
+const { recalculateShopBalance } = require("./shopAccountController");
 
 const generateInvoiceNo = () => {
   return `ME-${Date.now()}`;
@@ -288,6 +289,23 @@ exports.createSale = async (req, res) => {
           { transaction: t }
         );
       }
+    }
+
+    if (totalPaid > 0) {
+      await ShopTransaction.create(
+        {
+          type: "collection",
+          sourceType: saleType === "cash" ? "cash_sale" : "advance_payment",
+          sourceId: sale.id,
+          amount: totalPaid,
+          description: `${saleType === "cash" ? "Cash sale" : "Advance payment"} - invoice ${sale.invoiceNo}`,
+          transactionDate: new Date().toISOString().split("T")[0],
+          createdBy: req.user.id,
+        },
+        { transaction: t }
+      );
+
+      await recalculateShopBalance(t);
     }
 
     await t.commit();
