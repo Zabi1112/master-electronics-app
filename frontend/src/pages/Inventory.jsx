@@ -17,11 +17,13 @@ const emptyForm = {
   notes: "",
   fundingSource: "",
   partnerId: "",
+  investorId: "",
 };
 
 const Inventory = () => {
   const [products, setProducts] = useState([]);
   const [partners, setPartners] = useState([]);
+  const [investors, setInvestors] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
 
@@ -40,12 +42,14 @@ const Inventory = () => {
     setError("");
 
     try {
-      const [productsRes, partnersRes] = await Promise.all([
+      const [productsRes, partnersRes, investorsRes] = await Promise.all([
         api.get("/products"),
         api.get("/partners"),
+        api.get("/investors"),
       ]);
       setProducts(productsRes.data);
       setPartners(partnersRes.data || []);
+      setInvestors(investorsRes.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load inventory");
     } finally {
@@ -135,6 +139,7 @@ const Inventory = () => {
         quantity: Number(form.quantity || 0),
         lowStockAlertQty: Number(form.lowStockAlertQty || 1),
         partnerId: form.fundingSource === "partner" ? form.partnerId : null,
+        investorId: form.fundingSource === "investor" ? form.investorId : null,
       };
 
       if (editingId) {
@@ -170,6 +175,7 @@ const Inventory = () => {
       notes: product.notes || "",
       fundingSource: product.fundingSource || "",
       partnerId: product.partnerId || "",
+      investorId: product.investorId || "",
     });
 
     setFormOpen(true);
@@ -224,6 +230,9 @@ const Inventory = () => {
   const fundingLabel = (product) => {
     if (product.fundingSource === "partner") {
       return product.fundingPartner?.name || "Partner";
+    }
+    if (product.fundingSource === "investor") {
+      return product.fundingInvestor?.name || "Investor";
     }
     if (product.fundingSource === "shop") {
       return "Shop";
@@ -453,13 +462,15 @@ const Inventory = () => {
                 setForm({
                   ...form,
                   fundingSource: e.target.value,
-                  partnerId: e.target.value === "shop" ? "" : form.partnerId,
+                  partnerId: e.target.value === "partner" ? form.partnerId : "",
+                  investorId: e.target.value === "investor" ? form.investorId : "",
                 })
               }
               required
             >
               <option value="">Funded By...</option>
               <option value="partner">Partner</option>
+              <option value="investor">Investor</option>
               <option value="shop">Shop (Recovered Money)</option>
             </select>
 
@@ -475,6 +486,23 @@ const Inventory = () => {
                 {partners.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {form.fundingSource === "investor" && (
+              <select
+                name="investorId"
+                className="px-4 py-3 rounded-xl bg-white"
+                value={form.investorId}
+                onChange={handleChange}
+                required
+              >
+                <option value="">Select Investor...</option>
+                {investors.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.name}
                   </option>
                 ))}
               </select>

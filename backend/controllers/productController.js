@@ -1,11 +1,12 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
-const { Product, Partner } = require("../models");
+const { Product, Partner, Investor } = require("../models");
 const logActivity = require("../utils/activityLogger");
 const { createFundingEntry, removeFundingEntry } = require("../utils/fundingLedger");
 
 const fundingInclude = [
   { model: Partner, as: "fundingPartner", attributes: ["id", "name"] },
+  { model: Investor, as: "fundingInvestor", attributes: ["id", "name"] },
 ];
 
 exports.createProduct = async (req, res) => {
@@ -15,11 +16,12 @@ exports.createProduct = async (req, res) => {
     const {
       fundingSource,
       partnerId,
+      investorId,
       purchasePrice = 0,
       quantity = 1,
     } = req.body;
 
-    if (fundingSource && !["partner", "shop"].includes(fundingSource)) {
+    if (fundingSource && !["partner", "shop", "investor"].includes(fundingSource)) {
       await t.rollback();
       return res.status(400).json({ message: "Invalid funding source" });
     }
@@ -31,11 +33,19 @@ exports.createProduct = async (req, res) => {
       });
     }
 
+    if (fundingSource === "investor" && !investorId) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Investor is required when funding source is 'investor'",
+      });
+    }
+
     const product = await Product.create(
       {
         ...req.body,
         addedBy: req.user.id,
         partnerId: fundingSource === "partner" ? partnerId : null,
+        investorId: fundingSource === "investor" ? investorId : null,
       },
       { transaction: t }
     );
@@ -43,20 +53,23 @@ exports.createProduct = async (req, res) => {
     const amount = Number(purchasePrice) * Number(quantity);
 
     if (fundingSource && amount > 0) {
-      const { partnerTransactionId, shopTransactionId } = await createFundingEntry({
-        fundingSource,
-        partnerId,
-        amount,
-        description: `Inventory purchase: ${product.productName}`,
-        transactionDate: new Date().toISOString().split("T")[0],
-        sourceType: "purchase",
-        sourceId: product.id,
-        createdBy: req.user.id,
-        transaction: t,
-      });
+      const { partnerTransactionId, shopTransactionId, investorTransactionId } =
+        await createFundingEntry({
+          fundingSource,
+          partnerId,
+          investorId,
+          amount,
+          description: `Inventory purchase: ${product.productName}`,
+          transactionDate: new Date().toISOString().split("T")[0],
+          sourceType: "purchase",
+          sourceId: product.id,
+          createdBy: req.user.id,
+          transaction: t,
+        });
 
       product.partnerTransactionId = partnerTransactionId;
       product.shopTransactionId = shopTransactionId;
+      product.investorTransactionId = investorTransactionId;
       await product.save({ transaction: t });
     }
 
@@ -133,25 +146,28 @@ exports.updateProduct = async (req, res) => {
 
     const oldData = product.toJSON();
 
-    const { fundingSource, partnerId, purchasePrice, quantity, ...rest } =
+    const { fundingSource, partnerId, investorId, purchasePrice, quantity, ...rest } =
       req.body;
 
     const touchesFunding =
       fundingSource !== undefined ||
       partnerId !== undefined ||
+      investorId !== undefined ||
       purchasePrice !== undefined ||
       quantity !== undefined;
 
     const nextFundingSource =
       fundingSource !== undefined ? fundingSource : oldData.fundingSource;
 
-    if (nextFundingSource && !["partner", "shop"].includes(nextFundingSource)) {
+    if (nextFundingSource && !["partner", "shop", "investor"].includes(nextFundingSource)) {
       await t.rollback();
       return res.status(400).json({ message: "Invalid funding source" });
     }
 
     const nextPartnerId =
       partnerId !== undefined ? partnerId : oldData.partnerId;
+    const nextInvestorId =
+      investorId !== undefined ? investorId : oldData.investorId;
 
     if (nextFundingSource === "partner" && !nextPartnerId) {
       await t.rollback();
@@ -160,9 +176,17 @@ exports.updateProduct = async (req, res) => {
       });
     }
 
+    if (nextFundingSource === "investor" && !nextInvestorId) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Investor is required when funding source is 'investor'",
+      });
+    }
+
     let linkedIds = {
       partnerTransactionId: oldData.partnerTransactionId,
       shopTransactionId: oldData.shopTransactionId,
+      investorTransactionId: oldData.investorTransactionId,
     };
 
     if (touchesFunding && oldData.fundingSource) {
@@ -170,10 +194,12 @@ exports.updateProduct = async (req, res) => {
         partnerId: oldData.partnerId,
         partnerTransactionId: oldData.partnerTransactionId,
         shopTransactionId: oldData.shopTransactionId,
+        investorId: oldData.investorId,
+        investorTransactionId: oldData.investorTransactionId,
         transaction: t,
       });
 
-      linkedIds = { partnerTransactionId: null, shopTransactionId: null };
+      linkedIds = { partnerTransactionId: null, shopTransactionId: null, investorTransactionId: null };
     }
 
     const nextPurchasePrice =
@@ -187,8 +213,10 @@ exports.updateProduct = async (req, res) => {
         quantity: nextQuantity,
         fundingSource: nextFundingSource || null,
         partnerId: nextFundingSource === "partner" ? nextPartnerId : null,
+        investorId: nextFundingSource === "investor" ? nextInvestorId : null,
         partnerTransactionId: linkedIds.partnerTransactionId,
         shopTransactionId: linkedIds.shopTransactionId,
+        investorTransactionId: linkedIds.investorTransactionId,
       },
       { transaction: t }
     );
@@ -197,20 +225,23 @@ exports.updateProduct = async (req, res) => {
       const amount = Number(nextPurchasePrice) * Number(nextQuantity);
 
       if (amount > 0) {
-        const { partnerTransactionId, shopTransactionId } = await createFundingEntry({
-          fundingSource: nextFundingSource,
-          partnerId: nextPartnerId,
-          amount,
-          description: `Inventory purchase: ${product.productName}`,
-          transactionDate: new Date().toISOString().split("T")[0],
-          sourceType: "purchase",
-          sourceId: product.id,
-          createdBy: req.user.id,
-          transaction: t,
-        });
+        const { partnerTransactionId, shopTransactionId, investorTransactionId } =
+          await createFundingEntry({
+            fundingSource: nextFundingSource,
+            partnerId: nextPartnerId,
+            investorId: nextInvestorId,
+            amount,
+            description: `Inventory purchase: ${product.productName}`,
+            transactionDate: new Date().toISOString().split("T")[0],
+            sourceType: "purchase",
+            sourceId: product.id,
+            createdBy: req.user.id,
+            transaction: t,
+          });
 
         product.partnerTransactionId = partnerTransactionId;
         product.shopTransactionId = shopTransactionId;
+        product.investorTransactionId = investorTransactionId;
         await product.save({ transaction: t });
       }
     }
@@ -258,6 +289,8 @@ exports.deleteProduct = async (req, res) => {
       partnerId: oldData.partnerId,
       partnerTransactionId: oldData.partnerTransactionId,
       shopTransactionId: oldData.shopTransactionId,
+      investorId: oldData.investorId,
+      investorTransactionId: oldData.investorTransactionId,
       transaction: t,
     });
 

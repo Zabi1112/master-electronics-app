@@ -12,6 +12,7 @@ const emptyForm = {
   notes: "",
   fundingSource: "",
   partnerId: "",
+  investorId: "",
 };
 
 const categories = [
@@ -32,6 +33,7 @@ const Expenses = () => {
   const [expenses, setExpenses] = useState([]);
   const [summary, setSummary] = useState(null);
   const [partners, setPartners] = useState([]);
+  const [investors, setInvestors] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
 
@@ -60,15 +62,17 @@ const Expenses = () => {
       if (filters.paymentMethod)
         params.append("paymentMethod", filters.paymentMethod);
 
-      const [expensesRes, summaryRes, partnersRes] = await Promise.all([
+      const [expensesRes, summaryRes, partnersRes, investorsRes] = await Promise.all([
         api.get(`/expenses?${params.toString()}`),
         api.get("/expenses/summary"),
         api.get("/partners"),
+        api.get("/investors"),
       ]);
 
       setExpenses(expensesRes.data.expenses || []);
       setSummary(summaryRes.data);
       setPartners(partnersRes.data || []);
+      setInvestors(investorsRes.data || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load expenses");
     } finally {
@@ -125,6 +129,7 @@ const Expenses = () => {
         ...form,
         amount: Number(form.amount || 0),
         partnerId: form.fundingSource === "partner" ? form.partnerId : null,
+        investorId: form.fundingSource === "investor" ? form.investorId : null,
       };
 
       if (editingId) {
@@ -154,6 +159,7 @@ const Expenses = () => {
       notes: expense.notes || "",
       fundingSource: expense.fundingSource || "",
       partnerId: expense.partnerId || "",
+      investorId: expense.investorId || "",
     });
     setFormOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -168,6 +174,9 @@ const Expenses = () => {
   const fundingLabel = (expense) => {
     if (expense.fundingSource === "partner") {
       return expense.fundingPartner?.name || "Partner";
+    }
+    if (expense.fundingSource === "investor") {
+      return expense.fundingInvestor?.name || "Investor";
     }
     if (expense.fundingSource === "shop") {
       return "Shop";
@@ -293,13 +302,15 @@ const Expenses = () => {
                 setForm({
                   ...form,
                   fundingSource: e.target.value,
-                  partnerId: e.target.value === "shop" ? "" : form.partnerId,
+                  partnerId: e.target.value === "partner" ? form.partnerId : "",
+                  investorId: e.target.value === "investor" ? form.investorId : "",
                 })
               }
               required
             >
               <option value="">Funded By...</option>
               <option value="partner">Partner</option>
+              <option value="investor">Investor</option>
               <option value="shop">Shop (Recovered Money)</option>
             </select>
 
@@ -314,6 +325,22 @@ const Expenses = () => {
                 {partners.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {form.fundingSource === "investor" && (
+              <select
+                className="px-4 py-3 rounded-xl bg-white"
+                value={form.investorId}
+                onChange={(e) => setForm({ ...form, investorId: e.target.value })}
+                required
+              >
+                <option value="">Select Investor...</option>
+                {investors.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.name}
                   </option>
                 ))}
               </select>

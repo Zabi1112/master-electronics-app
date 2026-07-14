@@ -1,12 +1,13 @@
 const { Op, fn, col } = require("sequelize");
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
-const { Expense, User, Partner } = require("../models");
+const { Expense, User, Partner, Investor } = require("../models");
 const logActivity = require("../utils/activityLogger");
 const { createFundingEntry, removeFundingEntry } = require("../utils/fundingLedger");
 
 const fundingInclude = [
     { model: Partner, as: "fundingPartner", attributes: ["id", "name"] },
+    { model: Investor, as: "fundingInvestor", attributes: ["id", "name"] },
 ];
 
 const buildExpenseWhere = (query) => {
@@ -54,6 +55,7 @@ exports.createExpense = async (req, res) => {
             notes,
             fundingSource,
             partnerId,
+            investorId,
         } = req.body;
 
         if (!title) {
@@ -66,7 +68,7 @@ exports.createExpense = async (req, res) => {
             return res.status(400).json({ message: "Valid amount is required" });
         }
 
-        if (fundingSource && !["partner", "shop"].includes(fundingSource)) {
+        if (fundingSource && !["partner", "shop", "investor"].includes(fundingSource)) {
             await t.rollback();
             return res.status(400).json({ message: "Invalid funding source" });
         }
@@ -75,6 +77,13 @@ exports.createExpense = async (req, res) => {
             await t.rollback();
             return res.status(400).json({
                 message: "Partner is required when funding source is 'partner'",
+            });
+        }
+
+        if (fundingSource === "investor" && !investorId) {
+            await t.rollback();
+            return res.status(400).json({
+                message: "Investor is required when funding source is 'investor'",
             });
         }
 
@@ -89,25 +98,29 @@ exports.createExpense = async (req, res) => {
                 createdBy: req.user.id,
                 fundingSource: fundingSource || null,
                 partnerId: fundingSource === "partner" ? partnerId : null,
+                investorId: fundingSource === "investor" ? investorId : null,
             },
             { transaction: t }
         );
 
         if (fundingSource) {
-            const { partnerTransactionId, shopTransactionId } = await createFundingEntry({
-                fundingSource,
-                partnerId,
-                amount: Number(amount),
-                description: `Expense: ${expense.title}`,
-                transactionDate: expense.expenseDate,
-                sourceType: "expense",
-                sourceId: expense.id,
-                createdBy: req.user.id,
-                transaction: t,
-            });
+            const { partnerTransactionId, shopTransactionId, investorTransactionId } =
+                await createFundingEntry({
+                    fundingSource,
+                    partnerId,
+                    investorId,
+                    amount: Number(amount),
+                    description: `Expense: ${expense.title}`,
+                    transactionDate: expense.expenseDate,
+                    sourceType: "expense",
+                    sourceId: expense.id,
+                    createdBy: req.user.id,
+                    transaction: t,
+                });
 
             expense.partnerTransactionId = partnerTransactionId;
             expense.shopTransactionId = shopTransactionId;
+            expense.investorTransactionId = investorTransactionId;
             await expense.save({ transaction: t });
         }
 
@@ -215,23 +228,27 @@ exports.updateExpense = async (req, res) => {
             notes,
             fundingSource,
             partnerId,
+            investorId,
         } = req.body;
 
         const touchesFunding =
             fundingSource !== undefined ||
             partnerId !== undefined ||
+            investorId !== undefined ||
             amount !== undefined;
 
         const nextFundingSource =
             fundingSource !== undefined ? fundingSource : oldData.fundingSource;
 
-        if (nextFundingSource && !["partner", "shop"].includes(nextFundingSource)) {
+        if (nextFundingSource && !["partner", "shop", "investor"].includes(nextFundingSource)) {
             await t.rollback();
             return res.status(400).json({ message: "Invalid funding source" });
         }
 
         const nextPartnerId =
             partnerId !== undefined ? partnerId : oldData.partnerId;
+        const nextInvestorId =
+            investorId !== undefined ? investorId : oldData.investorId;
 
         if (nextFundingSource === "partner" && !nextPartnerId) {
             await t.rollback();
@@ -240,9 +257,17 @@ exports.updateExpense = async (req, res) => {
             });
         }
 
+        if (nextFundingSource === "investor" && !nextInvestorId) {
+            await t.rollback();
+            return res.status(400).json({
+                message: "Investor is required when funding source is 'investor'",
+            });
+        }
+
         let linkedIds = {
             partnerTransactionId: oldData.partnerTransactionId,
             shopTransactionId: oldData.shopTransactionId,
+            investorTransactionId: oldData.investorTransactionId,
         };
 
         if (touchesFunding && oldData.fundingSource) {
@@ -250,10 +275,12 @@ exports.updateExpense = async (req, res) => {
                 partnerId: oldData.partnerId,
                 partnerTransactionId: oldData.partnerTransactionId,
                 shopTransactionId: oldData.shopTransactionId,
+                investorId: oldData.investorId,
+                investorTransactionId: oldData.investorTransactionId,
                 transaction: t,
             });
 
-            linkedIds = { partnerTransactionId: null, shopTransactionId: null };
+            linkedIds = { partnerTransactionId: null, shopTransactionId: null, investorTransactionId: null };
         }
 
         const nextAmount = amount !== undefined ? Number(amount) : expense.amount;
@@ -268,27 +295,32 @@ exports.updateExpense = async (req, res) => {
                 notes: notes ?? expense.notes,
                 fundingSource: nextFundingSource || null,
                 partnerId: nextFundingSource === "partner" ? nextPartnerId : null,
+                investorId: nextFundingSource === "investor" ? nextInvestorId : null,
                 partnerTransactionId: linkedIds.partnerTransactionId,
                 shopTransactionId: linkedIds.shopTransactionId,
+                investorTransactionId: linkedIds.investorTransactionId,
             },
             { transaction: t }
         );
 
         if (touchesFunding && nextFundingSource && nextAmount > 0) {
-            const { partnerTransactionId, shopTransactionId } = await createFundingEntry({
-                fundingSource: nextFundingSource,
-                partnerId: nextPartnerId,
-                amount: nextAmount,
-                description: `Expense: ${expense.title}`,
-                transactionDate: expense.expenseDate,
-                sourceType: "expense",
-                sourceId: expense.id,
-                createdBy: req.user.id,
-                transaction: t,
-            });
+            const { partnerTransactionId, shopTransactionId, investorTransactionId } =
+                await createFundingEntry({
+                    fundingSource: nextFundingSource,
+                    partnerId: nextPartnerId,
+                    investorId: nextInvestorId,
+                    amount: nextAmount,
+                    description: `Expense: ${expense.title}`,
+                    transactionDate: expense.expenseDate,
+                    sourceType: "expense",
+                    sourceId: expense.id,
+                    createdBy: req.user.id,
+                    transaction: t,
+                });
 
             expense.partnerTransactionId = partnerTransactionId;
             expense.shopTransactionId = shopTransactionId;
+            expense.investorTransactionId = investorTransactionId;
             await expense.save({ transaction: t });
         }
 
@@ -335,6 +367,8 @@ exports.deleteExpense = async (req, res) => {
             partnerId: oldData.partnerId,
             partnerTransactionId: oldData.partnerTransactionId,
             shopTransactionId: oldData.shopTransactionId,
+            investorId: oldData.investorId,
+            investorTransactionId: oldData.investorTransactionId,
             transaction: t,
         });
 

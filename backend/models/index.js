@@ -10,6 +10,8 @@ const SaleReturn = require("./SaleReturn")(sequelize);
 const Installment = require("./Installment")(sequelize);
 const Partner = require("./Partner")(sequelize);
 const PartnerTransaction = require("./PartnerTransaction")(sequelize);
+const Investor = require("./Investor")(sequelize);
+const InvestorTransaction = require("./InvestorTransaction")(sequelize);
 const ShopAccount = require("./ShopAccount")(sequelize);
 const ShopTransaction = require("./ShopTransaction")(sequelize);
 const BusinessSetting = require("./BusinessSetting")(sequelize);
@@ -50,6 +52,10 @@ Installment.belongsTo(User, { foreignKey: "receivedBy", as: "receiver" });
 PartnerTransaction.belongsTo(Partner, { foreignKey: "partnerId", as: "partner" });
 PartnerTransaction.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
 
+// Investor relations
+InvestorTransaction.belongsTo(Investor, { foreignKey: "investorId", as: "investor" });
+InvestorTransaction.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
+
 // Shop account relations
 ShopTransaction.belongsTo(User, { foreignKey: "createdBy", as: "createdUser" });
 
@@ -63,6 +69,11 @@ Product.belongsTo(ShopTransaction, {
   foreignKey: "shopTransactionId",
   as: "shopTransaction",
 });
+Product.belongsTo(Investor, { foreignKey: "investorId", as: "fundingInvestor" });
+Product.belongsTo(InvestorTransaction, {
+  foreignKey: "investorTransactionId",
+  as: "investorTransaction",
+});
 
 Expense.belongsTo(Partner, { foreignKey: "partnerId", as: "fundingPartner" });
 Expense.belongsTo(PartnerTransaction, {
@@ -72,6 +83,11 @@ Expense.belongsTo(PartnerTransaction, {
 Expense.belongsTo(ShopTransaction, {
   foreignKey: "shopTransactionId",
   as: "shopTransaction",
+});
+Expense.belongsTo(Investor, { foreignKey: "investorId", as: "fundingInvestor" });
+Expense.belongsTo(InvestorTransaction, {
+  foreignKey: "investorTransactionId",
+  as: "investorTransaction",
 });
 
 // Donation relations
@@ -94,6 +110,8 @@ module.exports = {
   Installment,
   Partner,
   PartnerTransaction,
+  Investor,
+  InvestorTransaction,
   ShopAccount,
   ShopTransaction,
   BusinessSetting,

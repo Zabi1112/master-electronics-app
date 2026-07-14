@@ -1,6 +1,7 @@
-const { PartnerTransaction, ShopTransaction } = require("../models");
+const { PartnerTransaction, ShopTransaction, InvestorTransaction } = require("../models");
 const { recalculatePartnerBalance } = require("../controllers/partnerController");
 const { recalculateShopBalance } = require("../controllers/shopAccountController");
+const { recalculateInvestorBalance } = require("../controllers/investorController");
 
 // Books a purchase/expense against either a partner's ledger (as an
 // investment) or the shop's recovered-money ledger (as a usage), and keeps
@@ -9,6 +10,7 @@ const { recalculateShopBalance } = require("../controllers/shopAccountController
 const createFundingEntry = async ({
   fundingSource,
   partnerId,
+  investorId,
   amount,
   description,
   transactionDate,
@@ -32,7 +34,25 @@ const createFundingEntry = async ({
 
     await recalculatePartnerBalance(partnerId, transaction);
 
-    return { partnerTransactionId: trx.id, shopTransactionId: null };
+    return { partnerTransactionId: trx.id, shopTransactionId: null, investorTransactionId: null };
+  }
+
+  if (fundingSource === "investor") {
+    const trx = await InvestorTransaction.create(
+      {
+        investorId,
+        type: "investment",
+        amount,
+        description,
+        transactionDate,
+        createdBy,
+      },
+      { transaction }
+    );
+
+    await recalculateInvestorBalance(investorId, transaction);
+
+    return { partnerTransactionId: null, shopTransactionId: null, investorTransactionId: trx.id };
   }
 
   if (fundingSource === "shop") {
@@ -51,16 +71,18 @@ const createFundingEntry = async ({
 
     await recalculateShopBalance(transaction);
 
-    return { partnerTransactionId: null, shopTransactionId: trx.id };
+    return { partnerTransactionId: null, shopTransactionId: trx.id, investorTransactionId: null };
   }
 
-  return { partnerTransactionId: null, shopTransactionId: null };
+  return { partnerTransactionId: null, shopTransactionId: null, investorTransactionId: null };
 };
 
 const removeFundingEntry = async ({
   partnerId,
   partnerTransactionId,
   shopTransactionId,
+  investorId,
+  investorTransactionId,
   transaction,
 }) => {
   if (partnerTransactionId) {
@@ -71,6 +93,17 @@ const removeFundingEntry = async ({
 
     if (partnerId) {
       await recalculatePartnerBalance(partnerId, transaction);
+    }
+  }
+
+  if (investorTransactionId) {
+    await InvestorTransaction.destroy({
+      where: { id: investorTransactionId },
+      transaction,
+    });
+
+    if (investorId) {
+      await recalculateInvestorBalance(investorId, transaction);
     }
   }
 
