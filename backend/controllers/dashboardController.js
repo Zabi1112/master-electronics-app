@@ -1,5 +1,6 @@
 const { Op, fn, col } = require("sequelize");
 const { Product, Sale, Installment, Partner, DonationRecord, Expense} = require("../models");
+const { getOrCreateShopAccount } = require("./shopAccountController");
 // only destructure what that specific controller needs
 
 const sumField = async (Model, field, where = {}) => {
@@ -96,6 +97,8 @@ exports.getDashboardStats = async (req, res) => {
       }
     );
 
+    const shopAccount = await getOrCreateShopAccount();
+
     const totalProducts = await Product.count();
 
     const inStockProducts = await Product.count({
@@ -165,6 +168,12 @@ exports.getDashboardStats = async (req, res) => {
         totalPartnerInvestment,
         totalPartnerWithdrawals,
         totalPartnerBalance,
+      },
+
+      shopAccount: {
+        totalCollected: shopAccount.totalCollected,
+        totalRecycled: shopAccount.totalUsed,
+        currentBalance: shopAccount.currentBalance,
       },
     });
   } catch (error) {

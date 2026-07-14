@@ -9,6 +9,7 @@ import {
   HandCoins,
   PackageX,
   Receipt,
+  Recycle,
   RefreshCcw,
   TrendingUp,
   Wallet,
@@ -288,12 +289,17 @@ const Dashboard = () => {
         initial="hidden"
         animate="show"
         transition={{ staggerChildren: 0.06 }}
-        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4 mb-5"
+        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-4 mb-5"
       >
         <MiniCard
           icon={Banknote}
           title="Total Regained"
           value={formatMoney(stats.finance?.totalRegained)}
+        />
+        <MiniCard
+          icon={Recycle}
+          title="Money Recycled from Shop"
+          value={formatMoney(stats.shopAccount?.totalRecycled)}
         />
         <MiniCard
           icon={Wallet}
