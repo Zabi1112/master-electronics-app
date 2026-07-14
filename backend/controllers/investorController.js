@@ -5,6 +5,7 @@ const {
     Investor,
     InvestorTransaction,
     Product,
+    ProductBatch,
     Sale,
     User,
 } = require("../models");
@@ -65,10 +66,17 @@ const calculateInvestorReturn = async (investor) => {
         const sales = await Sale.findAll({
             include: [
                 {
-                    model: Product,
-                    as: "product",
+                    model: ProductBatch,
+                    as: "productBatch",
                     where: { investorId: investor.id, fundingSource: "investor" },
-                    attributes: ["id", "productName", "purchasePrice", "salePrice", "status"],
+                    attributes: ["id", "purchasePrice", "purchaseDate"],
+                    include: [
+                        {
+                            model: Product,
+                            as: "product",
+                            attributes: ["id", "productName", "purchasePrice", "salePrice", "status"],
+                        },
+                    ],
                 },
             ],
             order: [["createdAt", "DESC"]],

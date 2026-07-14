@@ -1,6 +1,6 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
-const { Sale, Product, SaleReturn, Customer, User } = require("../models");
+const { Sale, Product, ProductBatch, SaleReturn, Customer, User } = require("../models");
 const logActivity = require("../utils/activityLogger");
 
 const getToday = () => new Date().toISOString().split("T")[0];
@@ -134,6 +134,14 @@ exports.createReturn = async (req, res) => {
     product.quantity = Number(product.quantity) + returnQty;
     product.status = "in_stock";
     await product.save({ transaction: t });
+
+    if (sale.productBatchId) {
+      const batch = await ProductBatch.findByPk(sale.productBatchId, { transaction: t });
+      if (batch) {
+        batch.remainingQuantity = Number(batch.remainingQuantity) + returnQty;
+        await batch.save({ transaction: t });
+      }
+    }
 
     if (replacementProduct) {
       replacementProduct.quantity =

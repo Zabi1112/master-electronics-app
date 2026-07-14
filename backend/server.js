@@ -96,6 +96,12 @@ const initializeApp = async () => {
     await getSequelize().sync();
   }
   console.log("Tables synced");
+
+  const { backfillProductBatches } = require("./scripts/backfillProductBatches");
+  const { migrated } = await backfillProductBatches();
+  if (migrated) {
+    console.log(`Backfilled product batches for ${migrated} product(s)`);
+  }
 };
 
 const startServer = async () => {

@@ -5,6 +5,7 @@ const sequelize = getSequelize();
 const User = require("./User")(sequelize);
 const Customer = require("./Customer")(sequelize);
 const Product = require("./Product")(sequelize);
+const ProductBatch = require("./ProductBatch")(sequelize);
 const Sale = require("./Sale")(sequelize);
 const SaleReturn = require("./SaleReturn")(sequelize);
 const Installment = require("./Installment")(sequelize);
@@ -22,7 +23,26 @@ const ActivityLog = require("./ActivityLog")(sequelize);
 // Sale relations
 Sale.belongsTo(Customer, { foreignKey: "customerId", as: "customer" });
 Sale.belongsTo(Product, { foreignKey: "productId", as: "product" });
+Sale.belongsTo(ProductBatch, { foreignKey: "productBatchId", as: "productBatch" });
 Sale.belongsTo(User, { foreignKey: "soldBy", as: "salesman" });
+
+// Product batch relations
+Product.hasMany(ProductBatch, { foreignKey: "productId", as: "batches" });
+ProductBatch.belongsTo(Product, { foreignKey: "productId", as: "product" });
+ProductBatch.belongsTo(Partner, { foreignKey: "partnerId", as: "fundingPartner" });
+ProductBatch.belongsTo(PartnerTransaction, {
+  foreignKey: "partnerTransactionId",
+  as: "partnerTransaction",
+});
+ProductBatch.belongsTo(Investor, { foreignKey: "investorId", as: "fundingInvestor" });
+ProductBatch.belongsTo(InvestorTransaction, {
+  foreignKey: "investorTransactionId",
+  as: "investorTransaction",
+});
+ProductBatch.belongsTo(ShopTransaction, {
+  foreignKey: "shopTransactionId",
+  as: "shopTransaction",
+});
 
 // Sale return relations
 SaleReturn.belongsTo(Sale, { foreignKey: "saleId", as: "sale" });
@@ -105,6 +125,7 @@ module.exports = {
   User,
   Customer,
   Product,
+  ProductBatch,
   Sale,
   SaleReturn,
   Installment,

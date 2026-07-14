@@ -550,7 +550,7 @@ const Investors = () => {
                               className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-black/40 border border-yellow-600/10 rounded-xl p-3 text-xs text-gray-200"
                             >
                               <span className="text-yellow-300 font-bold">
-                                {sale.product?.productName || "Product"}
+                                {sale.productBatch?.product?.productName || "Product"}
                               </span>
                               <span>Sale: Rs. {money(sale.finalAmount)}</span>
                               <span>Profit Recovered: Rs. {money(sale.profitRecovered)}</span>

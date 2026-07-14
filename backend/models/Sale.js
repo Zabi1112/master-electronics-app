@@ -9,6 +9,7 @@ module.exports = (sequelize) => {
       saleType: { type: DataTypes.ENUM("cash", "installment"), allowNull: false },
       customerId: { type: DataTypes.INTEGER, allowNull: true },
       productId: { type: DataTypes.INTEGER, allowNull: false },
+      productBatchId: { type: DataTypes.INTEGER, allowNull: true },
       quantity: { type: DataTypes.INTEGER, defaultValue: 1 },
       purchasePrice: { type: DataTypes.FLOAT, defaultValue: 0 },
       cashPrice: { type: DataTypes.FLOAT, defaultValue: 0 },

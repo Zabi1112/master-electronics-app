@@ -1,7 +1,7 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
 const { Op } = require("sequelize");
-const { Product, Sale, Installment, Customer, User, ShopTransaction } = require("../models");
+const { Product, ProductBatch, Sale, Installment, Customer, User, ShopTransaction } = require("../models");
 const logActivity = require("../utils/activityLogger");
 const { recalculateShopBalance } = require("./shopAccountController");
 
@@ -53,6 +53,22 @@ exports.createSale = async (req, res) => {
       return res.status(400).json({ message: "Not enough stock available" });
     }
 
+    const batches = await ProductBatch.findAll({
+      where: { productId, remainingQuantity: { [Op.gt]: 0 } },
+      order: [["purchaseDate", "ASC"], ["id", "ASC"]],
+      transaction: t,
+    });
+
+    const batch = batches.find((b) => Number(b.remainingQuantity) >= Number(quantity));
+
+    if (batches.length && !batch) {
+      await t.rollback();
+      return res.status(400).json({
+        message:
+          "Stock for this item is split across purchase batches at different prices, and no single batch has enough remaining quantity to cover this sale. Please sell a smaller quantity.",
+      });
+    }
+
     let finalAmount = 0;
     let totalPaid = 0;
     let remainingAmount = 0;
@@ -61,7 +77,10 @@ exports.createSale = async (req, res) => {
     let finalCashPrice = 0;
     let finalInstallmentPrice = 0;
 
-    const totalPurchase = Number(product.purchasePrice || 0) * Number(quantity);
+    // Fall back to the product's own purchasePrice for legacy stock that predates batch tracking.
+    const totalPurchase = batch
+      ? Number(batch.purchasePrice || 0) * Number(quantity)
+      : Number(product.purchasePrice || 0) * Number(quantity);
 
     if (saleType === "cash") {
       finalCashPrice = Number(salePrice || product.salePrice || 0) * Number(quantity);
@@ -188,6 +207,7 @@ exports.createSale = async (req, res) => {
 
         customerId: saleType === "installment" ? customerId : null,
         productId,
+        productBatchId: batch ? batch.id : null,
         quantity,
 
         purchasePrice: totalPurchase,
@@ -242,6 +262,11 @@ exports.createSale = async (req, res) => {
     }
 
     await product.save({ transaction: t });
+
+    if (batch) {
+      batch.remainingQuantity = Number(batch.remainingQuantity) - Number(quantity);
+      await batch.save({ transaction: t });
+    }
 
     if (saleType === "installment") {
       const startDate =

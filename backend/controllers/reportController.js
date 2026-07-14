@@ -2,6 +2,7 @@ const { Op, fn, col } = require("sequelize");
 const {
     Sale,
     Product,
+    ProductBatch,
     Installment,
     Partner,
     PartnerTransaction,
@@ -232,19 +233,21 @@ exports.inventoryReport = async (req, res) => {
             (p) => Number(p.quantity) <= 0 || p.status === "sold"
         );
 
-        const inventoryValue = products.reduce((sum, p) => {
-            if (p.status === "in_stock") {
-                return sum + Number(p.purchasePrice || 0) * Number(p.quantity || 0);
-            }
-            return sum;
-        }, 0);
+        const inStockBatches = await ProductBatch.findAll({
+            where: { remainingQuantity: { [Op.gt]: 0 } },
+            include: [{ model: Product, as: "product", attributes: ["salePrice"] }],
+        });
 
-        const expectedSaleValue = products.reduce((sum, p) => {
-            if (p.status === "in_stock") {
-                return sum + Number(p.salePrice || 0) * Number(p.quantity || 0);
-            }
-            return sum;
-        }, 0);
+        const inventoryValue = inStockBatches.reduce(
+            (sum, b) => sum + Number(b.remainingQuantity || 0) * Number(b.purchasePrice || 0),
+            0
+        );
+
+        const expectedSaleValue = inStockBatches.reduce(
+            (sum, b) =>
+                sum + Number(b.remainingQuantity || 0) * Number(b.product?.salePrice || 0),
+            0
+        );
 
         res.json({
             summary: {

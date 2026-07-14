@@ -1,5 +1,5 @@
 const { Op, fn, col } = require("sequelize");
-const { Product, Sale, Installment, Partner, DonationRecord, Expense} = require("../models");
+const { Product, ProductBatch, Sale, Installment, Partner, DonationRecord, Expense} = require("../models");
 const { getOrCreateShopAccount } = require("./shopAccountController");
 // only destructure what that specific controller needs
 
@@ -17,21 +17,21 @@ exports.getDashboardStats = async (req, res) => {
   try {
     const today = new Date().toISOString().split("T")[0];
 
-    const products = await Product.findAll({ raw: true });
+    const inStockBatches = await ProductBatch.findAll({
+      where: { remainingQuantity: { [Op.gt]: 0 } },
+      include: [{ model: Product, as: "product", attributes: ["salePrice"] }],
+    });
 
-    const currentInventoryValue = products.reduce((sum, p) => {
-      if (p.status === "in_stock") {
-        return sum + Number(p.purchasePrice || 0) * Number(p.quantity || 0);
-      }
-      return sum;
-    }, 0);
+    const currentInventoryValue = inStockBatches.reduce(
+      (sum, b) => sum + Number(b.remainingQuantity || 0) * Number(b.purchasePrice || 0),
+      0
+    );
 
-    const expectedInventorySaleValue = products.reduce((sum, p) => {
-      if (p.status === "in_stock") {
-        return sum + Number(p.salePrice || 0) * Number(p.quantity || 0);
-      }
-      return sum;
-    }, 0);
+    const expectedInventorySaleValue = inStockBatches.reduce(
+      (sum, b) =>
+        sum + Number(b.remainingQuantity || 0) * Number(b.product?.salePrice || 0),
+      0
+    );
 
     const soldInventoryCost = await sumField(Sale, "purchasePrice");
 

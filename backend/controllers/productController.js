@@ -1,6 +1,6 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
-const { Product, Partner, Investor } = require("../models");
+const { Product, ProductBatch, Partner, Investor } = require("../models");
 const logActivity = require("../utils/activityLogger");
 const { createFundingEntry, removeFundingEntry } = require("../utils/fundingLedger");
 
@@ -8,6 +8,32 @@ const fundingInclude = [
   { model: Partner, as: "fundingPartner", attributes: ["id", "name"] },
   { model: Investor, as: "fundingInvestor", attributes: ["id", "name"] },
 ];
+
+const batchInclude = {
+  model: ProductBatch,
+  as: "batches",
+  include: [
+    { model: Partner, as: "fundingPartner", attributes: ["id", "name"] },
+    { model: Investor, as: "fundingInvestor", attributes: ["id", "name"] },
+  ],
+  order: [["purchaseDate", "ASC"], ["id", "ASC"]],
+};
+
+const validateFunding = (fundingSource, partnerId, investorId) => {
+  if (fundingSource && !["partner", "shop", "investor"].includes(fundingSource)) {
+    return "Invalid funding source";
+  }
+
+  if (fundingSource === "partner" && !partnerId) {
+    return "Partner is required when funding source is 'partner'";
+  }
+
+  if (fundingSource === "investor" && !investorId) {
+    return "Investor is required when funding source is 'investor'";
+  }
+
+  return null;
+};
 
 exports.createProduct = async (req, res) => {
   const t = await sequelize.transaction();
@@ -21,23 +47,10 @@ exports.createProduct = async (req, res) => {
       quantity = 1,
     } = req.body;
 
-    if (fundingSource && !["partner", "shop", "investor"].includes(fundingSource)) {
+    const fundingError = validateFunding(fundingSource, partnerId, investorId);
+    if (fundingError) {
       await t.rollback();
-      return res.status(400).json({ message: "Invalid funding source" });
-    }
-
-    if (fundingSource === "partner" && !partnerId) {
-      await t.rollback();
-      return res.status(400).json({
-        message: "Partner is required when funding source is 'partner'",
-      });
-    }
-
-    if (fundingSource === "investor" && !investorId) {
-      await t.rollback();
-      return res.status(400).json({
-        message: "Investor is required when funding source is 'investor'",
-      });
+      return res.status(400).json({ message: fundingError });
     }
 
     const product = await Product.create(
@@ -51,27 +64,49 @@ exports.createProduct = async (req, res) => {
     );
 
     const amount = Number(purchasePrice) * Number(quantity);
+    let batchFundingIds = {
+      partnerTransactionId: null,
+      shopTransactionId: null,
+      investorTransactionId: null,
+    };
 
     if (fundingSource && amount > 0) {
-      const { partnerTransactionId, shopTransactionId, investorTransactionId } =
-        await createFundingEntry({
-          fundingSource,
-          partnerId,
-          investorId,
-          amount,
-          description: `Inventory purchase: ${product.productName}`,
-          transactionDate: new Date().toISOString().split("T")[0],
-          sourceType: "purchase",
-          sourceId: product.id,
-          createdBy: req.user.id,
-          transaction: t,
-        });
+      batchFundingIds = await createFundingEntry({
+        fundingSource,
+        partnerId,
+        investorId,
+        amount,
+        description: `Inventory purchase: ${product.productName}`,
+        transactionDate: new Date().toISOString().split("T")[0],
+        sourceType: "purchase",
+        sourceId: product.id,
+        createdBy: req.user.id,
+        transaction: t,
+      });
 
-      product.partnerTransactionId = partnerTransactionId;
-      product.shopTransactionId = shopTransactionId;
-      product.investorTransactionId = investorTransactionId;
+      product.partnerTransactionId = batchFundingIds.partnerTransactionId;
+      product.shopTransactionId = batchFundingIds.shopTransactionId;
+      product.investorTransactionId = batchFundingIds.investorTransactionId;
       await product.save({ transaction: t });
     }
+
+    await ProductBatch.create(
+      {
+        productId: product.id,
+        quantity: Number(quantity),
+        remainingQuantity: Number(quantity),
+        purchasePrice: Number(purchasePrice),
+        purchaseDate: new Date().toISOString().split("T")[0],
+        fundingSource: fundingSource || null,
+        partnerId: fundingSource === "partner" ? partnerId : null,
+        partnerTransactionId: batchFundingIds.partnerTransactionId,
+        investorId: fundingSource === "investor" ? investorId : null,
+        investorTransactionId: batchFundingIds.investorTransactionId,
+        shopTransactionId: batchFundingIds.shopTransactionId,
+        createdBy: req.user.id,
+      },
+      { transaction: t }
+    );
 
     await t.commit();
 
@@ -98,10 +133,126 @@ exports.createProduct = async (req, res) => {
   }
 };
 
+exports.restockProduct = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const product = await Product.findByPk(req.params.id, { transaction: t });
+
+    if (!product) {
+      await t.rollback();
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    const {
+      quantity,
+      purchasePrice,
+      fundingSource,
+      partnerId,
+      investorId,
+      purchaseDate,
+    } = req.body;
+
+    const addedQuantity = Number(quantity);
+
+    if (!addedQuantity || addedQuantity <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Quantity must be greater than 0" });
+    }
+
+    if (purchasePrice === undefined || Number(purchasePrice) < 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Valid purchase price is required" });
+    }
+
+    const fundingError = validateFunding(fundingSource, partnerId, investorId);
+    if (fundingError) {
+      await t.rollback();
+      return res.status(400).json({ message: fundingError });
+    }
+
+    const amount = Number(purchasePrice) * addedQuantity;
+    let batchFundingIds = {
+      partnerTransactionId: null,
+      shopTransactionId: null,
+      investorTransactionId: null,
+    };
+
+    if (fundingSource && amount > 0) {
+      batchFundingIds = await createFundingEntry({
+        fundingSource,
+        partnerId,
+        investorId,
+        amount,
+        description: `Inventory restock: ${product.productName}`,
+        transactionDate: purchaseDate || new Date().toISOString().split("T")[0],
+        sourceType: "purchase",
+        sourceId: product.id,
+        createdBy: req.user.id,
+        transaction: t,
+      });
+    }
+
+    const batch = await ProductBatch.create(
+      {
+        productId: product.id,
+        quantity: addedQuantity,
+        remainingQuantity: addedQuantity,
+        purchasePrice: Number(purchasePrice),
+        purchaseDate: purchaseDate || new Date().toISOString().split("T")[0],
+        fundingSource: fundingSource || null,
+        partnerId: fundingSource === "partner" ? partnerId : null,
+        partnerTransactionId: batchFundingIds.partnerTransactionId,
+        investorId: fundingSource === "investor" ? investorId : null,
+        investorTransactionId: batchFundingIds.investorTransactionId,
+        shopTransactionId: batchFundingIds.shopTransactionId,
+        createdBy: req.user.id,
+      },
+      { transaction: t }
+    );
+
+    await product.update(
+      {
+        quantity: Number(product.quantity) + addedQuantity,
+        status: "in_stock",
+        purchasePrice: Number(purchasePrice),
+        fundingSource: fundingSource || product.fundingSource,
+        partnerId: fundingSource === "partner" ? partnerId : product.partnerId,
+        investorId: fundingSource === "investor" ? investorId : product.investorId,
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    await logActivity({
+      req,
+      action: "update",
+      module: "products",
+      recordId: product.id,
+      description: `Restocked product: ${product.productName} (+${addedQuantity} @ Rs. ${purchasePrice})`,
+      newData: batch.toJSON(),
+    });
+
+    res.status(201).json({
+      message: "Product restocked successfully",
+      product,
+      batch,
+    });
+  } catch (error) {
+    await t.rollback();
+
+    res.status(500).json({
+      message: "Restock product failed",
+      error: error.message,
+    });
+  }
+};
+
 exports.getProducts = async (req, res) => {
   try {
     const products = await Product.findAll({
-      include: fundingInclude,
+      include: [...fundingInclude, batchInclude],
       order: [["createdAt", "DESC"]],
     });
 
@@ -117,7 +268,7 @@ exports.getProducts = async (req, res) => {
 exports.getProductById = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id, {
-      include: fundingInclude,
+      include: [...fundingInclude, batchInclude],
     });
 
     if (!product) {
@@ -146,105 +297,16 @@ exports.updateProduct = async (req, res) => {
 
     const oldData = product.toJSON();
 
-    const { fundingSource, partnerId, investorId, purchasePrice, quantity, ...rest } =
-      req.body;
+    const {
+      fundingSource,
+      partnerId,
+      investorId,
+      purchasePrice,
+      quantity,
+      ...rest
+    } = req.body;
 
-    const touchesFunding =
-      fundingSource !== undefined ||
-      partnerId !== undefined ||
-      investorId !== undefined ||
-      purchasePrice !== undefined ||
-      quantity !== undefined;
-
-    const nextFundingSource =
-      fundingSource !== undefined ? fundingSource : oldData.fundingSource;
-
-    if (nextFundingSource && !["partner", "shop", "investor"].includes(nextFundingSource)) {
-      await t.rollback();
-      return res.status(400).json({ message: "Invalid funding source" });
-    }
-
-    const nextPartnerId =
-      partnerId !== undefined ? partnerId : oldData.partnerId;
-    const nextInvestorId =
-      investorId !== undefined ? investorId : oldData.investorId;
-
-    if (nextFundingSource === "partner" && !nextPartnerId) {
-      await t.rollback();
-      return res.status(400).json({
-        message: "Partner is required when funding source is 'partner'",
-      });
-    }
-
-    if (nextFundingSource === "investor" && !nextInvestorId) {
-      await t.rollback();
-      return res.status(400).json({
-        message: "Investor is required when funding source is 'investor'",
-      });
-    }
-
-    let linkedIds = {
-      partnerTransactionId: oldData.partnerTransactionId,
-      shopTransactionId: oldData.shopTransactionId,
-      investorTransactionId: oldData.investorTransactionId,
-    };
-
-    if (touchesFunding && oldData.fundingSource) {
-      await removeFundingEntry({
-        partnerId: oldData.partnerId,
-        partnerTransactionId: oldData.partnerTransactionId,
-        shopTransactionId: oldData.shopTransactionId,
-        investorId: oldData.investorId,
-        investorTransactionId: oldData.investorTransactionId,
-        transaction: t,
-      });
-
-      linkedIds = { partnerTransactionId: null, shopTransactionId: null, investorTransactionId: null };
-    }
-
-    const nextPurchasePrice =
-      purchasePrice !== undefined ? purchasePrice : oldData.purchasePrice;
-    const nextQuantity = quantity !== undefined ? quantity : oldData.quantity;
-
-    await product.update(
-      {
-        ...rest,
-        purchasePrice: nextPurchasePrice,
-        quantity: nextQuantity,
-        fundingSource: nextFundingSource || null,
-        partnerId: nextFundingSource === "partner" ? nextPartnerId : null,
-        investorId: nextFundingSource === "investor" ? nextInvestorId : null,
-        partnerTransactionId: linkedIds.partnerTransactionId,
-        shopTransactionId: linkedIds.shopTransactionId,
-        investorTransactionId: linkedIds.investorTransactionId,
-      },
-      { transaction: t }
-    );
-
-    if (touchesFunding && nextFundingSource) {
-      const amount = Number(nextPurchasePrice) * Number(nextQuantity);
-
-      if (amount > 0) {
-        const { partnerTransactionId, shopTransactionId, investorTransactionId } =
-          await createFundingEntry({
-            fundingSource: nextFundingSource,
-            partnerId: nextPartnerId,
-            investorId: nextInvestorId,
-            amount,
-            description: `Inventory purchase: ${product.productName}`,
-            transactionDate: new Date().toISOString().split("T")[0],
-            sourceType: "purchase",
-            sourceId: product.id,
-            createdBy: req.user.id,
-            transaction: t,
-          });
-
-        product.partnerTransactionId = partnerTransactionId;
-        product.shopTransactionId = shopTransactionId;
-        product.investorTransactionId = investorTransactionId;
-        await product.save({ transaction: t });
-      }
-    }
+    await product.update(rest, { transaction: t });
 
     await t.commit();
 
@@ -285,14 +347,35 @@ exports.deleteProduct = async (req, res) => {
 
     const oldData = product.toJSON();
 
-    await removeFundingEntry({
-      partnerId: oldData.partnerId,
-      partnerTransactionId: oldData.partnerTransactionId,
-      shopTransactionId: oldData.shopTransactionId,
-      investorId: oldData.investorId,
-      investorTransactionId: oldData.investorTransactionId,
+    const batches = await ProductBatch.findAll({
+      where: { productId: product.id },
       transaction: t,
     });
+
+    for (const batch of batches) {
+      await removeFundingEntry({
+        partnerId: batch.partnerId,
+        partnerTransactionId: batch.partnerTransactionId,
+        shopTransactionId: batch.shopTransactionId,
+        investorId: batch.investorId,
+        investorTransactionId: batch.investorTransactionId,
+        transaction: t,
+      });
+    }
+
+    await ProductBatch.destroy({ where: { productId: product.id }, transaction: t });
+
+    if (!batches.length && oldData.fundingSource) {
+      // Legacy product predating batch tracking — clean up its own funding entry.
+      await removeFundingEntry({
+        partnerId: oldData.partnerId,
+        partnerTransactionId: oldData.partnerTransactionId,
+        shopTransactionId: oldData.shopTransactionId,
+        investorId: oldData.investorId,
+        investorTransactionId: oldData.investorTransactionId,
+        transaction: t,
+      });
+    }
 
     await product.destroy({ transaction: t });
 

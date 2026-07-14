@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 
 const emptyForm = {
@@ -20,6 +20,15 @@ const emptyForm = {
   investorId: "",
 };
 
+const emptyRestockForm = {
+  quantity: "",
+  purchasePrice: "",
+  fundingSource: "",
+  partnerId: "",
+  investorId: "",
+  purchaseDate: "",
+};
+
 const Inventory = () => {
   const [products, setProducts] = useState([]);
   const [partners, setPartners] = useState([]);
@@ -30,6 +39,10 @@ const Inventory = () => {
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const [restockingProduct, setRestockingProduct] = useState(null);
+  const [restockForm, setRestockForm] = useState(emptyRestockForm);
+  const [expandedBatchesId, setExpandedBatchesId] = useState(null);
 
   const [filters, setFilters] = useState({
     search: "",
@@ -85,17 +98,24 @@ const Inventory = () => {
 
   const summary = useMemo(() => {
     const inventoryValue = products.reduce((sum, p) => {
-      if (p.status === "in_stock") {
-        return sum + Number(p.purchasePrice || 0) * Number(p.quantity || 0);
-      }
-      return sum;
+      const batches = p.batches || [];
+      return (
+        sum +
+        batches.reduce(
+          (batchSum, b) =>
+            batchSum + Number(b.remainingQuantity || 0) * Number(b.purchasePrice || 0),
+          0
+        )
+      );
     }, 0);
 
     const expectedSaleValue = products.reduce((sum, p) => {
-      if (p.status === "in_stock") {
-        return sum + Number(p.salePrice || 0) * Number(p.quantity || 0);
-      }
-      return sum;
+      const batches = p.batches || [];
+      const remainingQty = batches.reduce(
+        (qtySum, b) => qtySum + Number(b.remainingQuantity || 0),
+        0
+      );
+      return sum + Number(p.salePrice || 0) * remainingQty;
     }, 0);
 
     const lowStock = products.filter(
@@ -126,25 +146,39 @@ const Inventory = () => {
     e.preventDefault();
     setError("");
 
-    if (!form.fundingSource) {
+    if (!editingId && !form.fundingSource) {
       setError("Please select who funded this purchase");
       return;
     }
 
     try {
-      const payload = {
-        ...form,
-        purchasePrice: Number(form.purchasePrice || 0),
-        salePrice: Number(form.salePrice || 0),
-        quantity: Number(form.quantity || 0),
-        lowStockAlertQty: Number(form.lowStockAlertQty || 1),
-        partnerId: form.fundingSource === "partner" ? form.partnerId : null,
-        investorId: form.fundingSource === "investor" ? form.investorId : null,
-      };
-
       if (editingId) {
+        const payload = {
+          productName: form.productName,
+          category: form.category,
+          brand: form.brand,
+          model: form.model,
+          serialNumber: form.serialNumber,
+          imeiNumber: form.imeiNumber,
+          salePrice: Number(form.salePrice || 0),
+          lowStockAlertQty: Number(form.lowStockAlertQty || 1),
+          warrantyInfo: form.warrantyInfo,
+          status: form.status,
+          notes: form.notes,
+        };
+
         await api.put(`/products/${editingId}`, payload);
       } else {
+        const payload = {
+          ...form,
+          purchasePrice: Number(form.purchasePrice || 0),
+          salePrice: Number(form.salePrice || 0),
+          quantity: Number(form.quantity || 0),
+          lowStockAlertQty: Number(form.lowStockAlertQty || 1),
+          partnerId: form.fundingSource === "partner" ? form.partnerId : null,
+          investorId: form.fundingSource === "investor" ? form.investorId : null,
+        };
+
         await api.post("/products", payload);
       }
 
@@ -158,6 +192,7 @@ const Inventory = () => {
   };
 
   const startEdit = (product) => {
+    setRestockingProduct(null);
     setEditingId(product.id);
     setForm({
       productName: product.productName || "",
@@ -186,6 +221,49 @@ const Inventory = () => {
     setEditingId(null);
     setForm(emptyForm);
     setFormOpen(false);
+  };
+
+  const openRestock = (product) => {
+    setFormOpen(false);
+    setEditingId(null);
+    setRestockingProduct(product);
+    setRestockForm({ ...emptyRestockForm, purchasePrice: product.purchasePrice || "" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelRestock = () => {
+    setRestockingProduct(null);
+    setRestockForm(emptyRestockForm);
+  };
+
+  const submitRestock = async (e) => {
+    e.preventDefault();
+    setError("");
+
+    if (!restockForm.fundingSource) {
+      setError("Please select who funded this restock");
+      return;
+    }
+
+    try {
+      await api.post(`/products/${restockingProduct.id}/restock`, {
+        quantity: Number(restockForm.quantity || 0),
+        purchasePrice: Number(restockForm.purchasePrice || 0),
+        fundingSource: restockForm.fundingSource,
+        partnerId: restockForm.fundingSource === "partner" ? restockForm.partnerId : null,
+        investorId: restockForm.fundingSource === "investor" ? restockForm.investorId : null,
+        purchaseDate: restockForm.purchaseDate || undefined,
+      });
+
+      cancelRestock();
+      loadProducts();
+    } catch (err) {
+      setError(err.response?.data?.message || "Restock failed");
+    }
+  };
+
+  const toggleBatches = (productId) => {
+    setExpandedBatchesId((current) => (current === productId ? null : productId));
   };
 
   const deleteProduct = async (id) => {
@@ -395,15 +473,17 @@ const Inventory = () => {
               onChange={handleChange}
             />
 
-            <input
-              name="purchasePrice"
-              type="number"
-              className="px-4 py-3 rounded-xl bg-white"
-              placeholder="Purchase Price"
-              value={form.purchasePrice}
-              onChange={handleChange}
-              required
-            />
+            {!editingId && (
+              <input
+                name="purchasePrice"
+                type="number"
+                className="px-4 py-3 rounded-xl bg-white"
+                placeholder="Purchase Price"
+                value={form.purchasePrice}
+                onChange={handleChange}
+                required
+              />
+            )}
 
             <input
               name="salePrice"
@@ -415,15 +495,17 @@ const Inventory = () => {
               required
             />
 
-            <input
-              name="quantity"
-              type="number"
-              className="px-4 py-3 rounded-xl bg-white"
-              placeholder="Quantity"
-              value={form.quantity}
-              onChange={handleChange}
-              required
-            />
+            {!editingId && (
+              <input
+                name="quantity"
+                type="number"
+                className="px-4 py-3 rounded-xl bg-white"
+                placeholder="Quantity"
+                value={form.quantity}
+                onChange={handleChange}
+                required
+              />
+            )}
 
             <input
               name="lowStockAlertQty"
@@ -454,27 +536,29 @@ const Inventory = () => {
               <option value="damaged">Damaged</option>
             </select>
 
-            <select
-              name="fundingSource"
-              className="px-4 py-3 rounded-xl bg-white"
-              value={form.fundingSource}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  fundingSource: e.target.value,
-                  partnerId: e.target.value === "partner" ? form.partnerId : "",
-                  investorId: e.target.value === "investor" ? form.investorId : "",
-                })
-              }
-              required
-            >
-              <option value="">Funded By...</option>
-              <option value="partner">Partner</option>
-              <option value="investor">Investor</option>
-              <option value="shop">Shop (Recovered Money)</option>
-            </select>
+            {!editingId && (
+              <select
+                name="fundingSource"
+                className="px-4 py-3 rounded-xl bg-white"
+                value={form.fundingSource}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    fundingSource: e.target.value,
+                    partnerId: e.target.value === "partner" ? form.partnerId : "",
+                    investorId: e.target.value === "investor" ? form.investorId : "",
+                  })
+                }
+                required
+              >
+                <option value="">Funded By...</option>
+                <option value="partner">Partner</option>
+                <option value="investor">Investor</option>
+                <option value="shop">Shop (Recovered Money)</option>
+              </select>
+            )}
 
-            {form.fundingSource === "partner" && (
+            {!editingId && form.fundingSource === "partner" && (
               <select
                 name="partnerId"
                 className="px-4 py-3 rounded-xl bg-white"
@@ -491,7 +575,7 @@ const Inventory = () => {
               </select>
             )}
 
-            {form.fundingSource === "investor" && (
+            {!editingId && form.fundingSource === "investor" && (
               <select
                 name="investorId"
                 className="px-4 py-3 rounded-xl bg-white"
@@ -506,6 +590,14 @@ const Inventory = () => {
                   </option>
                 ))}
               </select>
+            )}
+
+            {editingId && (
+              <p className="text-sm text-gray-400 md:col-span-2 xl:col-span-3">
+                Purchase price, quantity and funding source can't be edited here — use{" "}
+                <strong className="text-yellow-400">+ Restock</strong> on the product to add
+                stock at a new price/funder.
+              </p>
             )}
 
             <textarea
@@ -540,6 +632,117 @@ const Inventory = () => {
         </form>
       )}
 
+      {restockingProduct && (
+        <form
+          onSubmit={submitRestock}
+          className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-6 mb-6"
+        >
+          <h2 className="text-xl font-bold text-yellow-400 mb-4">
+            Restock: {restockingProduct.productName}
+          </h2>
+          <p className="text-gray-400 text-sm mb-4">
+            Current stock: {restockingProduct.quantity} @ Rs.{" "}
+            {Number(restockingProduct.purchasePrice || 0).toLocaleString()} (latest price)
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <input
+              type="number"
+              className="px-4 py-3 rounded-xl bg-white"
+              placeholder="Quantity to Add"
+              value={restockForm.quantity}
+              onChange={(e) => setRestockForm({ ...restockForm, quantity: e.target.value })}
+              required
+            />
+
+            <input
+              type="number"
+              className="px-4 py-3 rounded-xl bg-white"
+              placeholder="Purchase Price (this batch)"
+              value={restockForm.purchasePrice}
+              onChange={(e) =>
+                setRestockForm({ ...restockForm, purchasePrice: e.target.value })
+              }
+              required
+            />
+
+            <input
+              type="date"
+              className="px-4 py-3 rounded-xl bg-white"
+              value={restockForm.purchaseDate}
+              onChange={(e) =>
+                setRestockForm({ ...restockForm, purchaseDate: e.target.value })
+              }
+            />
+
+            <select
+              className="px-4 py-3 rounded-xl bg-white"
+              value={restockForm.fundingSource}
+              onChange={(e) =>
+                setRestockForm({
+                  ...restockForm,
+                  fundingSource: e.target.value,
+                  partnerId: e.target.value === "partner" ? restockForm.partnerId : "",
+                  investorId: e.target.value === "investor" ? restockForm.investorId : "",
+                })
+              }
+              required
+            >
+              <option value="">Funded By...</option>
+              <option value="partner">Partner</option>
+              <option value="investor">Investor</option>
+              <option value="shop">Shop (Recovered Money)</option>
+            </select>
+
+            {restockForm.fundingSource === "partner" && (
+              <select
+                className="px-4 py-3 rounded-xl bg-white"
+                value={restockForm.partnerId}
+                onChange={(e) => setRestockForm({ ...restockForm, partnerId: e.target.value })}
+                required
+              >
+                <option value="">Select Partner...</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {restockForm.fundingSource === "investor" && (
+              <select
+                className="px-4 py-3 rounded-xl bg-white"
+                value={restockForm.investorId}
+                onChange={(e) => setRestockForm({ ...restockForm, investorId: e.target.value })}
+                required
+              >
+                <option value="">Select Investor...</option>
+                {investors.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mt-5">
+            <button
+              type="button"
+              onClick={cancelRestock}
+              className="bg-gray-700 text-white font-bold py-3 rounded-xl"
+            >
+              Cancel
+            </button>
+
+            <button className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded-xl">
+              Save Restock
+            </button>
+          </div>
+        </form>
+      )}
+
       {loading ? (
         <p className="text-yellow-400">Loading inventory...</p>
       ) : (
@@ -561,57 +764,80 @@ const Inventory = () => {
 
               <tbody>
                 {filteredProducts.map((product) => (
-                  <tr
-                    key={product.id}
-                    className="border-t border-yellow-600/20 text-gray-200"
-                  >
-                    <td className="p-3">
-                      <div className="font-semibold text-yellow-300">
-                        {product.productName}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {product.brand || "-"} {product.model || ""} /{" "}
-                        {product.category}
-                      </div>
-                    </td>
+                  <Fragment key={product.id}>
+                    <tr
+                      className="border-t border-yellow-600/20 text-gray-200"
+                    >
+                      <td className="p-3">
+                        <div className="font-semibold text-yellow-300">
+                          {product.productName}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {product.brand || "-"} {product.model || ""} /{" "}
+                          {product.category}
+                        </div>
+                      </td>
 
-                    <td className="p-3 text-sm">
-                      <div>{product.serialNumber || "-"}</div>
-                      <div className="text-gray-400">
-                        {product.imeiNumber || "-"}
-                      </div>
-                    </td>
+                      <td className="p-3 text-sm">
+                        <div>{product.serialNumber || "-"}</div>
+                        <div className="text-gray-400">
+                          {product.imeiNumber || "-"}
+                        </div>
+                      </td>
 
-                    <td className="p-3">
-                      {Number(product.purchasePrice || 0).toLocaleString()}
-                    </td>
+                      <td className="p-3">
+                        {Number(product.purchasePrice || 0).toLocaleString()}
+                      </td>
 
-                    <td className="p-3">
-                      {Number(product.salePrice || 0).toLocaleString()}
-                    </td>
+                      <td className="p-3">
+                        {Number(product.salePrice || 0).toLocaleString()}
+                      </td>
 
-                    <td className="p-3">{product.quantity}</td>
+                      <td className="p-3">{product.quantity}</td>
 
-                    <td className="p-3">{getStockBadge(product)}</td>
+                      <td className="p-3">{getStockBadge(product)}</td>
 
-                    <td className="p-3 text-sm">{fundingLabel(product)}</td>
+                      <td className="p-3 text-sm">{fundingLabel(product)}</td>
 
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => startEdit(product)}
-                        className="bg-yellow-500 text-black px-3 py-2 rounded-lg font-bold mr-2"
-                      >
-                        Edit
-                      </button>
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <button
+                          onClick={() => openRestock(product)}
+                          className="bg-green-600 text-white px-3 py-2 rounded-lg font-bold mr-2"
+                        >
+                          + Stock
+                        </button>
 
-                      <button
-                        onClick={() => deleteProduct(product.id)}
-                        className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
+                        <button
+                          onClick={() => toggleBatches(product.id)}
+                          className="bg-gray-700 text-white px-3 py-2 rounded-lg font-bold mr-2"
+                        >
+                          {expandedBatchesId === product.id ? "Hide" : "History"}
+                        </button>
+
+                        <button
+                          onClick={() => startEdit(product)}
+                          className="bg-yellow-500 text-black px-3 py-2 rounded-lg font-bold mr-2"
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          onClick={() => deleteProduct(product.id)}
+                          className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+
+                    {expandedBatchesId === product.id && (
+                      <tr className="border-t border-yellow-600/10 bg-black/40">
+                        <td colSpan={8} className="p-3">
+                          <BatchHistory batches={product.batches} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -663,7 +889,27 @@ const Inventory = () => {
                   </div>
                 )}
 
+                {expandedBatchesId === product.id && (
+                  <div className="mt-3">
+                    <BatchHistory batches={product.batches} />
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3 mt-4">
+                  <button
+                    onClick={() => openRestock(product)}
+                    className="bg-green-600 text-white py-3 rounded-xl font-bold"
+                  >
+                    + Stock
+                  </button>
+
+                  <button
+                    onClick={() => toggleBatches(product.id)}
+                    className="bg-gray-700 text-white py-3 rounded-xl font-bold"
+                  >
+                    {expandedBatchesId === product.id ? "Hide History" : "History"}
+                  </button>
+
                   <button
                     onClick={() => startEdit(product)}
                     className="bg-yellow-500 text-black py-3 rounded-xl font-bold"
@@ -683,6 +929,37 @@ const Inventory = () => {
           </div>
         </>
       )}
+    </div>
+  );
+};
+
+const BatchHistory = ({ batches }) => {
+  if (!batches?.length) {
+    return <p className="text-gray-400 text-sm">No purchase batches recorded yet.</p>;
+  }
+
+  const fundingLabel = (batch) => {
+    if (batch.fundingSource === "partner") return batch.fundingPartner?.name || "Partner";
+    if (batch.fundingSource === "investor") return batch.fundingInvestor?.name || "Investor";
+    if (batch.fundingSource === "shop") return "Shop";
+    return "-";
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-yellow-400 font-bold uppercase">Purchase Batches</p>
+      {batches.map((batch) => (
+        <div
+          key={batch.id}
+          className="grid grid-cols-2 md:grid-cols-5 gap-2 bg-black/40 border border-yellow-600/10 rounded-xl p-3 text-xs text-gray-200"
+        >
+          <span className="text-yellow-300 font-bold">{batch.purchaseDate}</span>
+          <span>Qty: {batch.quantity}</span>
+          <span>Remaining: {batch.remainingQuantity}</span>
+          <span>Price: Rs. {Number(batch.purchasePrice || 0).toLocaleString()}</span>
+          <span>Funded by: {fundingLabel(batch)}</span>
+        </div>
+      ))}
     </div>
   );
 };

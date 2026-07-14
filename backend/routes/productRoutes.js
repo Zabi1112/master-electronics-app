@@ -6,6 +6,7 @@ const {
   getProductById,
   updateProduct,
   deleteProduct,
+  restockProduct,
 } = require("../controllers/productController");
 
 const { protect, allowRoles } = require("../middleware/authMiddleware");
@@ -29,6 +30,8 @@ router.get(
 );
 
 router.put("/:id", allowRoles("admin", "manager"), updateProduct);
+
+router.post("/:id/restock", allowRoles("admin", "manager"), restockProduct);
 
 router.delete("/:id", allowRoles("admin"), deleteProduct);
 
