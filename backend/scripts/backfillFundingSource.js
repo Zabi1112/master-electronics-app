@@ -21,20 +21,23 @@ const run = async () => {
   await sequelize.authenticate();
   const { Partner, PartnerTransaction, Product, Expense } = require("../models");
 
-  const zabi = await Partner.findOne({
-    where: sequelize.where(
-      sequelize.fn("LOWER", sequelize.col("name")),
-      "zabi ullah"
-    ),
+  const { Op } = require("sequelize");
+
+  const matches = await Partner.findAll({
+    where: { name: { [Op.iLike]: "%warraich%" } },
   });
 
-  if (!zabi) {
+  if (matches.length !== 1) {
     console.error(
-      'No Partner named "Zabi ullah" was found. Create that Partner record first, then re-run this script.'
+      matches.length === 0
+        ? 'No Partner matching "Warraich" was found. Create that Partner record first, then re-run this script.'
+        : `Multiple partners matched "Warraich": ${matches.map((p) => `${p.name} (id ${p.id})`).join(", ")}. Narrow the match in this script and re-run.`
     );
     process.exitCode = 1;
     return;
   }
+
+  const zabi = matches[0];
 
   const products = await Product.findAll({ where: { fundingSource: null } });
   const expenses = await Expense.findAll({ where: { fundingSource: null } });
