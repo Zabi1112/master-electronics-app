@@ -23,6 +23,18 @@ const monthLabel = (key) => {
   return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
 };
 
+const nextMonthKey = () => {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const PLAN_TABS = [
+  { plan: 3, view: "plan3", label: "3-Mo Next Month" },
+  { plan: 6, view: "plan6", label: "6-Mo Next Month" },
+  { plan: 12, view: "plan12", label: "Yearly Next Month" },
+];
+
 const Installments = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -35,6 +47,13 @@ const Installments = () => {
 
   const [collections, setCollections] = useState(null);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
+
+  const [planData, setPlanData] = useState({ 3: null, 6: null, 12: null });
+  const [planLoading, setPlanLoading] = useState({
+    3: false,
+    6: false,
+    12: false,
+  });
 
   const [dueModalOpen, setDueModalOpen] = useState(false);
   const [dueThisMonth, setDueThisMonth] = useState(null);
@@ -123,6 +142,25 @@ const Installments = () => {
     }
   };
 
+  const loadNextMonthByPlan = async (planMonths) => {
+    setPlanLoading((prev) => ({ ...prev, [planMonths]: true }));
+    setError("");
+
+    try {
+      const res = await api.get("/installments/due-this-month", {
+        params: { month: nextMonthKey(), planMonths },
+      });
+      setPlanData((prev) => ({ ...prev, [planMonths]: res.data }));
+    } catch (err) {
+      setError(
+        err.response?.data?.message ||
+          "Failed to load next month's collections"
+      );
+    } finally {
+      setPlanLoading((prev) => ({ ...prev, [planMonths]: false }));
+    }
+  };
+
   const loadDueThisMonth = async () => {
     setDueLoading(true);
     setError("");
@@ -147,6 +185,11 @@ const Installments = () => {
   useEffect(() => {
     if (view === "collections" && !collections) {
       loadMonthlyCollections();
+    }
+
+    const planTab = PLAN_TABS.find((t) => t.view === view);
+    if (planTab && !planData[planTab.plan]) {
+      loadNextMonthByPlan(planTab.plan);
     }
   }, [view]);
 
@@ -306,6 +349,20 @@ const Installments = () => {
               >
                 Monthly Collections
               </button>
+
+              {PLAN_TABS.map((t) => (
+                <button
+                  key={t.view}
+                  onClick={() => setView(t.view)}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                    view === t.view
+                      ? "bg-yellow-500 text-black"
+                      : "text-yellow-300"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
           )}
 
@@ -741,6 +798,18 @@ const Installments = () => {
         </>
       )}
 
+      {PLAN_TABS.map(
+        (t) =>
+          view === t.view && (
+            <NextMonthPlanView
+              key={t.view}
+              label={t.label.replace(" Next Month", "")}
+              data={planData[t.plan]}
+              loading={planLoading[t.plan]}
+            />
+          )
+      )}
+
       {paymentModal && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
           <form
@@ -1039,6 +1108,100 @@ const Installments = () => {
         </div>
       )}
     </div>
+  );
+};
+
+const NextMonthPlanView = ({ label, data, loading }) => {
+  if (loading) {
+    return (
+      <p className="text-yellow-400">
+        Loading {label} collections for next month...
+      </p>
+    );
+  }
+
+  if (!data || data.installments.length === 0) {
+    return (
+      <p className="text-gray-400">
+        No {label} plan installments due next month.
+      </p>
+    );
+  }
+
+  const { summary, installments } = data;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <Mini title="Total Items" value={summary.totalItems} />
+        <Mini title="Total Due" value={`Rs. ${money(summary.totalAmount)}`} />
+        <Mini
+          title="Already Paid"
+          value={`Rs. ${money(summary.totalCollected)}`}
+        />
+        <Mini
+          title="Remaining"
+          value={`Rs. ${money(summary.totalRemaining)}`}
+        />
+      </div>
+
+      <div className="hidden lg:block bg-black/70 border border-yellow-600/30 rounded-2xl overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-yellow-500 text-black">
+            <tr>
+              <th className="p-3 text-left">Customer</th>
+              <th className="p-3 text-left">Product</th>
+              <th className="p-3 text-left">Due Date</th>
+              <th className="p-3 text-left">Amount</th>
+              <th className="p-3 text-left">Status</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {installments.map((item) => (
+              <tr
+                key={item.id}
+                className="border-t border-yellow-600/20 text-gray-200"
+              >
+                <td className="p-3">{item.customerName}</td>
+                <td className="p-3">{item.productName}</td>
+                <td className="p-3">{item.dueDate}</td>
+                <td className="p-3">Rs. {money(item.amount)}</td>
+                <td className="p-3">
+                  <Badge status={item.displayStatus} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="lg:hidden space-y-4">
+        {installments.map((item) => (
+          <div
+            key={item.id}
+            className="bg-black/75 border border-yellow-600/30 rounded-2xl p-4"
+          >
+            <div className="flex justify-between gap-3">
+              <h3 className="font-bold text-yellow-400">
+                {item.customerName}
+              </h3>
+              <Badge status={item.displayStatus} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+              <Info label="Product" value={item.productName} />
+              <Info label="Due Date" value={item.dueDate} />
+              <Info label="Amount" value={`Rs. ${money(item.amount)}`} />
+              <Info
+                label="Remaining"
+                value={`Rs. ${money(item.remainingAmount)}`}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 };
 

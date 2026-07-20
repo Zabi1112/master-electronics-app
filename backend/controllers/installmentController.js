@@ -740,7 +740,7 @@ exports.getMonthlyCollections = async (req, res) => {
 
 exports.getDueThisMonth = async (req, res) => {
   try {
-    const { month } = req.query; // optional "YYYY-MM", defaults to current month
+    const { month, planMonths } = req.query; // optional "YYYY-MM", defaults to current month; optional installment plan filter (3/6/12)
 
     const now = new Date();
     const monthKey =
@@ -750,18 +750,24 @@ exports.getDueThisMonth = async (req, res) => {
     const startDate = `${monthKey}-01`;
     const endDate = new Date(year, mon, 0).toISOString().split("T")[0]; // last day of month
 
+    const saleInclude = {
+      model: Sale,
+      as: "sale",
+      include: [{ model: Product, as: "product" }],
+    };
+
+    if (planMonths) {
+      // Restricts to sales on this installment plan duration (e.g. next month's
+      // 3/6/12-month plan collections) - requires the join since the filter is on Sale.
+      saleInclude.where = { installmentMonths: Number(planMonths) };
+      saleInclude.required = true;
+    }
+
     const installments = await Installment.findAll({
       where: {
         dueDate: { [Op.gte]: startDate, [Op.lte]: endDate },
       },
-      include: [
-        { model: Customer, as: "customer" },
-        {
-          model: Sale,
-          as: "sale",
-          include: [{ model: Product, as: "product" }],
-        },
-      ],
+      include: [{ model: Customer, as: "customer" }, saleInclude],
       order: [["dueDate", "ASC"]],
     });
 
@@ -791,6 +797,7 @@ exports.getDueThisMonth = async (req, res) => {
 
     const summary = {
       month: monthKey,
+      planMonths: planMonths ? Number(planMonths) : null,
       totalItems: data.length,
       paidCount: data.filter((d) => d.displayStatus === "paid").length,
       unpaidCount: data.filter((d) => d.displayStatus !== "paid").length,
