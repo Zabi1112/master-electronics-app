@@ -24,6 +24,11 @@ module.exports = (sequelize) => {
       profitRecovered: { type: DataTypes.FLOAT, defaultValue: 0 },
       profitPending: { type: DataTypes.FLOAT, defaultValue: 0 },
       installmentMonths: { type: DataTypes.INTEGER, defaultValue: 0 },
+      installmentFrequency: {
+        type: DataTypes.ENUM("daily", "weekly", "monthly"),
+        defaultValue: "monthly",
+      },
+      markupPercent: { type: DataTypes.FLOAT, defaultValue: 0 },
       monthlyInstallment: { type: DataTypes.FLOAT, defaultValue: 0 },
       installmentStartDate: { type: DataTypes.DATEONLY, allowNull: true },
       expectedClearDate: { type: DataTypes.DATEONLY, allowNull: true },

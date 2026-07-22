@@ -16,10 +16,18 @@ const getInstallmentMarkup = (months) => {
   return 0;
 };
 
-const getInstallmentDueDate = (startDate, monthIndex, dueDay = 10) => {
+const getInstallmentDueDate = (startDate, frequency, index, dueDay = 10) => {
   const d = new Date(startDate);
-  d.setMonth(d.getMonth() + monthIndex);
-  d.setDate(dueDay);
+
+  if (frequency === "daily") {
+    d.setDate(d.getDate() + index);
+  } else if (frequency === "weekly") {
+    d.setDate(d.getDate() + index * 7);
+  } else {
+    d.setMonth(d.getMonth() + index);
+    d.setDate(dueDay);
+  }
+
   return d.toISOString().split("T")[0];
 };
 
@@ -38,6 +46,8 @@ exports.createSale = async (req, res) => {
       paidAmount = 0,
       advanceAmount,
       installmentMonths,
+      installmentFrequency = "monthly",
+      markupPercent,
       installmentStartDate,
     } = req.body;
 
@@ -89,29 +99,56 @@ exports.createSale = async (req, res) => {
       remainingAmount = finalAmount - totalPaid;
     }
 
-    if (saleType === "installment") {
-      const allowedMonths = [3, 6, 12];
+    let appliedMarkupPercent = 0;
+    let resolvedFrequency = "monthly";
 
+    if (saleType === "installment") {
       if (!customerId) {
         await t.rollback();
         return res.status(400).json({ message: "Customer is required for installment sale" });
       }
 
-      if (!allowedMonths.includes(Number(installmentMonths))) {
-        await t.rollback();
-        return res.status(400).json({
-          message: "Installment months must be 3, 6, or 12",
-        });
+      const frequency = ["daily", "weekly", "monthly"].includes(installmentFrequency)
+        ? installmentFrequency
+        : "monthly";
+
+      resolvedFrequency = frequency;
+
+      if (frequency === "monthly") {
+        const allowedMonths = [3, 6, 12];
+
+        if (!allowedMonths.includes(Number(installmentMonths))) {
+          await t.rollback();
+          return res.status(400).json({
+            message: "Installment months must be 3, 6, or 12",
+          });
+        }
+
+        appliedMarkupPercent = getInstallmentMarkup(installmentMonths);
+      } else {
+        if (!Number.isInteger(Number(installmentMonths)) || Number(installmentMonths) < 2) {
+          await t.rollback();
+          return res.status(400).json({
+            message: "Number of installments must be a whole number of at least 2",
+          });
+        }
+
+        if (markupPercent === undefined || markupPercent === null || markupPercent === "" || Number(markupPercent) < 0) {
+          await t.rollback();
+          return res.status(400).json({
+            message: "Markup % is required for daily/weekly installment plans",
+          });
+        }
+
+        appliedMarkupPercent = Number(markupPercent);
       }
 
       finalCashPrice =
         Number(cashPrice || product.salePrice || product.salePrice || 0) *
         Number(quantity);
 
-      const markupPercent = getInstallmentMarkup(installmentMonths);
-
       finalInstallmentPrice =
-        finalCashPrice + (finalCashPrice * markupPercent) / 100;
+        finalCashPrice + (finalCashPrice * appliedMarkupPercent) / 100;
 
       finalAmount = finalInstallmentPrice - Number(discount || 0);
 
@@ -143,6 +180,7 @@ exports.createSale = async (req, res) => {
 
       expectedClearDate = getInstallmentDueDate(
         startDate,
+        frequency,
         Number(installmentMonths) - 1,
         10
       );
@@ -230,6 +268,9 @@ exports.createSale = async (req, res) => {
         profitPending,
 
         installmentMonths: saleType === "installment" ? installmentMonths : null,
+        installmentFrequency:
+          saleType === "installment" ? resolvedFrequency : "monthly",
+        markupPercent: saleType === "installment" ? appliedMarkupPercent : 0,
         monthlyInstallment:
           saleType === "installment" ? monthlyInstallment : null,
 
@@ -300,7 +341,7 @@ exports.createSale = async (req, res) => {
             saleId: sale.id,
             customerId,
             installmentNo: i,
-            dueDate: getInstallmentDueDate(startDate, i - 1, 10),
+            dueDate: getInstallmentDueDate(startDate, resolvedFrequency, i - 1, 10),
             amount: monthlyInstallment,
             paidAmount: 0,
             remainingAmount: monthlyInstallment,
@@ -417,6 +458,115 @@ exports.getSaleById = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Get sale failed",
+      error: error.message,
+    });
+  }
+};
+
+const todayDate = () => new Date().toISOString().split("T")[0];
+
+exports.payCashSaleBalance = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const { amount } = req.body;
+
+    const sale = await Sale.findByPk(req.params.id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!sale) {
+      await t.rollback();
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (sale.saleType !== "cash") {
+      await t.rollback();
+      return res.status(400).json({
+        message: "This is an installment sale — use the installment payment flow instead",
+      });
+    }
+
+    const currentRemaining = Number(sale.remainingAmount || 0);
+
+    if (currentRemaining <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Sale already fully paid" });
+    }
+
+    const payAmount = Number(amount);
+
+    if (!payAmount || payAmount <= 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid payment amount" });
+    }
+
+    if (payAmount > currentRemaining) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Payment amount cannot be greater than the remaining balance",
+        remainingAmount: currentRemaining,
+      });
+    }
+
+    const previousPaid = Number(sale.paidAmount || 0);
+    const newPaid = previousPaid + payAmount;
+
+    sale.paidAmount = newPaid;
+    sale.remainingAmount = currentRemaining - payAmount;
+
+    if (sale.remainingAmount <= 0) {
+      sale.remainingAmount = 0;
+      sale.status = "completed";
+    }
+
+    const totalPurchase = Number(sale.purchasePrice || 0);
+    const totalProfit = Number(sale.profit || 0);
+
+    sale.profitRecovered = Math.max(0, newPaid - totalPurchase);
+    if (sale.profitRecovered > totalProfit) {
+      sale.profitRecovered = totalProfit;
+    }
+    sale.profitPending = Math.max(0, totalProfit - sale.profitRecovered);
+
+    await sale.save({ transaction: t });
+
+    await ShopTransaction.create(
+      {
+        type: "collection",
+        sourceType: "cash_sale",
+        sourceId: sale.id,
+        amount: payAmount,
+        description: `Balance payment - invoice ${sale.invoiceNo}`,
+        transactionDate: todayDate(),
+        createdBy: req.user.id,
+      },
+      { transaction: t }
+    );
+
+    await recalculateShopBalance(t);
+
+    await t.commit();
+
+    await logActivity({
+      req,
+      action: "pay",
+      module: "sales",
+      recordId: sale.id,
+      description: `Received balance payment Rs. ${payAmount} for invoice ${sale.invoiceNo}`,
+      newData: sale.toJSON(),
+    });
+
+    res.json({
+      message: "Payment recorded successfully",
+      sale,
+    });
+  } catch (error) {
+    await t.rollback();
+
+    res.status(500).json({
+      message: "Payment failed",
       error: error.message,
     });
   }

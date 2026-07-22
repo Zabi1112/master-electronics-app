@@ -40,6 +40,15 @@ const InvoicePrint = ({ sale }) => {
               <p className="text-[11px] uppercase tracking-[0.2em] text-yellow-300">Status</p>
               <p className="mt-1 capitalize">{sale.status}</p>
             </div>
+            {sale.saleType === "installment" && (
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-yellow-300">Plan</p>
+                <p className="mt-1 capitalize">
+                  {sale.installmentMonths} {sale.installmentFrequency || "monthly"} installments
+                  {Number(sale.markupPercent) > 0 && ` · ${sale.markupPercent}% markup`}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

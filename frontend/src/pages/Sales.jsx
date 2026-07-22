@@ -15,7 +15,9 @@ const emptyForm = {
   discount: 0,
   paidAmount: "",
   advanceAmount: "",
+  installmentFrequency: "monthly",
   installmentMonths: 3,
+  markupPercent: "",
   installmentStartDate: "",
 };
 
@@ -33,6 +35,9 @@ const Sales = () => {
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [paymentModal, setPaymentModal] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -99,7 +104,10 @@ const Sales = () => {
     const cashTotal =
       Number(form.cashPrice || selectedProduct?.salePrice || 0) * qty;
 
-    const markupPercent = getMarkup(form.installmentMonths);
+    const markupPercent =
+      form.installmentFrequency === "monthly"
+        ? getMarkup(form.installmentMonths)
+        : Number(form.markupPercent || 0);
     const installmentTotal = cashTotal + (cashTotal * markupPercent) / 100;
     const finalAmount = installmentTotal - discount;
 
@@ -140,7 +148,14 @@ const Sales = () => {
       }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.productId, form.installmentMonths, form.quantity, form.cashPrice]);
+  }, [
+    form.productId,
+    form.installmentMonths,
+    form.installmentFrequency,
+    form.markupPercent,
+    form.quantity,
+    form.cashPrice,
+  ]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -168,7 +183,18 @@ const Sales = () => {
       return;
     }
 
-    if (["quantity", "cashPrice", "discount"].includes(name)) {
+    if (name === "installmentFrequency") {
+      setForm((old) => ({
+        ...old,
+        installmentFrequency: value,
+        installmentMonths: value === "monthly" ? 3 : old.installmentMonths || 2,
+        markupPercent: value === "monthly" ? "" : old.markupPercent,
+        advanceAmount: "",
+      }));
+      return;
+    }
+
+    if (["quantity", "cashPrice", "discount", "markupPercent"].includes(name)) {
       setForm((old) => ({
         ...old,
         [name]: value,
@@ -220,7 +246,12 @@ const Sales = () => {
               ),
               discount: Number(form.discount || 0),
               advanceAmount: Number(calculations.advance || 0),
+              installmentFrequency: form.installmentFrequency || "monthly",
               installmentMonths: Number(form.installmentMonths || 3),
+              markupPercent:
+                form.installmentFrequency === "monthly"
+                  ? undefined
+                  : Number(form.markupPercent || 0),
               installmentStartDate:
                 form.installmentStartDate ||
                 new Date().toISOString().split("T")[0],
@@ -233,6 +264,33 @@ const Sales = () => {
       loadData();
     } catch (err) {
       setError(err.response?.data?.message || "Create sale failed");
+    }
+  };
+
+  const openPayment = (sale) => {
+    setPaymentModal(sale);
+    setPaymentAmount(sale.remainingAmount || "");
+  };
+
+  const submitPayment = async (e) => {
+    e.preventDefault();
+    if (submittingPayment) return;
+
+    setError("");
+    setSubmittingPayment(true);
+
+    try {
+      await api.put(`/sales/${paymentModal.id}/pay`, {
+        amount: Number(paymentAmount || 0),
+      });
+
+      setPaymentModal(null);
+      setPaymentAmount("");
+      loadData();
+    } catch (err) {
+      setError(err.response?.data?.message || "Payment failed");
+    } finally {
+      setSubmittingPayment(false);
     }
   };
 
@@ -370,16 +428,53 @@ const Sales = () => {
                 />
 
                 <select
-                  name="installmentMonths"
+                  name="installmentFrequency"
                   className="px-4 py-3 rounded-xl bg-white"
-                  value={form.installmentMonths}
+                  value={form.installmentFrequency}
                   onChange={handleChange}
-                  required
                 >
-                  <option value="3">3 Months - 20% Increase</option>
-                  <option value="6">6 Months - 30% Increase</option>
-                  <option value="12">12 Months - 40% Increase</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="daily">Daily</option>
                 </select>
+
+                {form.installmentFrequency === "monthly" ? (
+                  <select
+                    name="installmentMonths"
+                    className="px-4 py-3 rounded-xl bg-white"
+                    value={form.installmentMonths}
+                    onChange={handleChange}
+                    required
+                  >
+                    <option value="3">3 Months - 20% Increase</option>
+                    <option value="6">6 Months - 30% Increase</option>
+                    <option value="12">12 Months - 40% Increase</option>
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      name="installmentMonths"
+                      type="number"
+                      min="2"
+                      className="px-4 py-3 rounded-xl bg-white"
+                      placeholder={`Number of ${form.installmentFrequency} installments`}
+                      value={form.installmentMonths}
+                      onChange={handleChange}
+                      required
+                    />
+
+                    <input
+                      name="markupPercent"
+                      type="number"
+                      min="0"
+                      className="px-4 py-3 rounded-xl bg-white"
+                      placeholder="Markup %"
+                      value={form.markupPercent}
+                      onChange={handleChange}
+                      required
+                    />
+                  </>
+                )}
 
                 <input
                   name="advanceAmount"
@@ -440,7 +535,7 @@ const Sales = () => {
                   value={calculations.remainingInstallments}
                 />
                 <Calc
-                  title="Monthly Installment"
+                  title={`Per-${form.installmentFrequency === "monthly" ? "Month" : form.installmentFrequency === "weekly" ? "Week" : "Day"} Installment`}
                   value={`Rs. ${money(calculations.monthly)}`}
                 />
                 <Calc
@@ -451,7 +546,13 @@ const Sales = () => {
 
               <p className="text-xs text-gray-400 mt-3">
                 Advance amount is counted as installment #1. Remaining
-                installments will start from the next month on the 10th.
+                installments will follow{" "}
+                {form.installmentFrequency === "monthly"
+                  ? "every month on the 10th"
+                  : form.installmentFrequency === "weekly"
+                  ? "every 7 days from the start date"
+                  : "every day from the start date"}
+                .
               </p>
             </div>
           )}
@@ -506,7 +607,16 @@ const Sales = () => {
                     <td className="p-3">Rs. {money(sale.paidAmount)}</td>
                     <td className="p-3">Rs. {money(sale.remainingAmount)}</td>
                     <td className="p-3 capitalize">{sale.status}</td>
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                      {sale.saleType === "cash" &&
+                        Number(sale.remainingAmount) > 0 && (
+                          <button
+                            onClick={() => openPayment(sale)}
+                            className="bg-green-500 text-black px-3 py-2 rounded-lg font-bold"
+                          >
+                            Record Payment
+                          </button>
+                        )}
                       <button
                         onClick={() => setSelectedInvoice(sale)}
                         className="bg-yellow-500 text-black px-3 py-2 rounded-lg font-bold"
@@ -553,9 +663,18 @@ const Sales = () => {
                   <Info label="Profit" value={`Rs. ${money(sale.profit)}`} />
                 </div>
 
+                {sale.saleType === "cash" && Number(sale.remainingAmount) > 0 && (
+                  <button
+                    onClick={() => openPayment(sale)}
+                    className="mt-3 w-full bg-green-500 text-black py-3 rounded-xl font-bold"
+                  >
+                    Record Payment
+                  </button>
+                )}
+
                 <button
                   onClick={() => setSelectedInvoice(sale)}
-                  className="mt-4 w-full bg-yellow-500 text-black py-3 rounded-xl font-bold"
+                  className="mt-3 w-full bg-yellow-500 text-black py-3 rounded-xl font-bold"
                 >
                   View Invoice
                 </button>
@@ -606,6 +725,57 @@ const Sales = () => {
 
             <InvoicePrint sale={selectedInvoice} />
           </div>
+        </div>
+      )}
+
+      {paymentModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
+          <form
+            onSubmit={submitPayment}
+            className="w-full max-w-md bg-[#0b0b0b] border border-yellow-600/40 rounded-3xl p-5"
+          >
+            <h2 className="text-xl font-bold text-yellow-400 mb-1">
+              Record Payment
+            </h2>
+            <p className="text-sm text-gray-400 mb-4">
+              Invoice {paymentModal.invoiceNo} —{" "}
+              {paymentModal.product?.productName || `Product #${paymentModal.productId}`}
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+              <Info label="Paid so far" value={`Rs. ${money(paymentModal.paidAmount)}`} />
+              <Info label="Remaining" value={`Rs. ${money(paymentModal.remainingAmount)}`} />
+            </div>
+
+            <label className="text-sm text-gray-400 mb-1 block">Amount Received</label>
+            <input
+              type="number"
+              min="1"
+              max={paymentModal.remainingAmount}
+              className="w-full px-4 py-3 rounded-xl bg-white"
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(e.target.value)}
+              required
+              autoFocus
+            />
+
+            <div className="grid grid-cols-2 gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setPaymentModal(null)}
+                className="bg-gray-700 text-white py-3 rounded-xl font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submittingPayment}
+                className="bg-green-500 text-black py-3 rounded-xl font-bold disabled:opacity-60"
+              >
+                {submittingPayment ? "Saving..." : "Save Payment"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

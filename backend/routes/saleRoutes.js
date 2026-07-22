@@ -5,6 +5,7 @@ const {
   getSales,
   getSaleById,
   getInstallments,
+  payCashSaleBalance,
 } = require("../controllers/saleController");
 
 const { protect, allowRoles } = require("../middleware/authMiddleware");
@@ -35,6 +36,12 @@ router.get(
   "/:id",
   allowRoles("admin", "manager", "salesman", "accounts"),
   getSaleById
+);
+
+router.put(
+  "/:id/pay",
+  allowRoles("admin", "manager", "salesman", "accounts"),
+  payCashSaleBalance
 );
 
 module.exports = router;
