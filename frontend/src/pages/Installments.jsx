@@ -1103,6 +1103,7 @@ const Installments = () => {
               month={dueThisMonth.summary.month}
               summary={dueThisMonth.summary}
               installments={dueThisMonth.installments}
+              groups={dueThisMonth.groups}
             />
           </div>
         </div>

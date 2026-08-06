@@ -7,13 +7,21 @@ const statusLabel = (status) => {
   return "Pending";
 };
 
-const DueThisMonthPrint = ({ month, summary, installments = [] }) => {
+const DueThisMonthPrint = ({ month, summary, installments = [], groups }) => {
   const monthLabel = (() => {
     const [year, mon] = String(month || "").split("-");
     if (!year || !mon) return month;
     const date = new Date(Number(year), Number(mon) - 1, 1);
     return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   })();
+
+  // Fall back to a single "All" group if the API didn't provide grouped data.
+  const resolvedGroups =
+    groups && groups.length
+      ? groups
+      : installments.length
+      ? [{ category: "All", count: installments.length, items: installments }]
+      : [];
 
   return (
     <div
@@ -42,41 +50,50 @@ const DueThisMonthPrint = ({ month, summary, installments = [] }) => {
         </div>
       </div>
 
-      <div className="section-card">
-        <table className="w-full border-separate border-spacing-0">
-          <thead>
-            <tr className="text-gray-300">
-              <th className="border border-[#2b2b34] px-3 py-2 text-left">#</th>
-              <th className="border border-[#2b2b34] px-3 py-2 text-left">Customer</th>
-              <th className="border border-[#2b2b34] px-3 py-2 text-left">Contact</th>
-              <th className="border border-[#2b2b34] px-3 py-2 text-left">Product</th>
-              <th className="border border-[#2b2b34] px-3 py-2 text-left">Due Date</th>
-              <th className="border border-[#2b2b34] px-3 py-2 text-right">Amount</th>
-              <th className="border border-[#2b2b34] px-3 py-2 text-left">Status</th>
-            </tr>
-          </thead>
+      {resolvedGroups.map((group) => (
+        <div className="section-card mb-6" key={group.category}>
+          <h2 className="text-lg font-bold text-yellow-400 mb-2">
+            {group.category} Customers{" "}
+            <span className="text-sm text-gray-400 font-normal">
+              ({group.count})
+            </span>
+          </h2>
 
-          <tbody>
-            {installments.map((item, index) => (
-              <tr key={item.id} className="text-gray-300">
-                <td className="border border-[#2b2b34] px-3 py-2">{index + 1}</td>
-                <td className="border border-[#2b2b34] px-3 py-2 font-semibold text-white">
-                  {item.customerName}
-                </td>
-                <td className="border border-[#2b2b34] px-3 py-2">{item.customerPhone}</td>
-                <td className="border border-[#2b2b34] px-3 py-2">{item.productName}</td>
-                <td className="border border-[#2b2b34] px-3 py-2">{item.dueDate}</td>
-                <td className="border border-[#2b2b34] px-3 py-2 text-right">
-                  Rs. {money(item.amount)}
-                </td>
-                <td className="border border-[#2b2b34] px-3 py-2">
-                  {statusLabel(item.displayStatus)}
-                </td>
+          <table className="w-full border-separate border-spacing-0">
+            <thead>
+              <tr className="text-gray-300">
+                <th className="border border-[#2b2b34] px-3 py-2 text-left">#</th>
+                <th className="border border-[#2b2b34] px-3 py-2 text-left">Customer</th>
+                <th className="border border-[#2b2b34] px-3 py-2 text-left">Contact</th>
+                <th className="border border-[#2b2b34] px-3 py-2 text-left">Product</th>
+                <th className="border border-[#2b2b34] px-3 py-2 text-left">Due Date</th>
+                <th className="border border-[#2b2b34] px-3 py-2 text-right">Amount</th>
+                <th className="border border-[#2b2b34] px-3 py-2 text-left">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+
+            <tbody>
+              {group.items.map((item, index) => (
+                <tr key={item.id} className="text-gray-300">
+                  <td className="border border-[#2b2b34] px-3 py-2">{index + 1}</td>
+                  <td className="border border-[#2b2b34] px-3 py-2 font-semibold text-white">
+                    {item.customerName}
+                  </td>
+                  <td className="border border-[#2b2b34] px-3 py-2">{item.customerPhone}</td>
+                  <td className="border border-[#2b2b34] px-3 py-2">{item.productName}</td>
+                  <td className="border border-[#2b2b34] px-3 py-2">{item.dueDate}</td>
+                  <td className="border border-[#2b2b34] px-3 py-2 text-right">
+                    Rs. {money(item.amount)}
+                  </td>
+                  <td className="border border-[#2b2b34] px-3 py-2">
+                    {statusLabel(item.displayStatus)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
 
       <p className="text-center text-xs mt-8 text-gray-500">
         Generated by Master Electronics system.

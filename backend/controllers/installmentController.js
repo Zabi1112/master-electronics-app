@@ -773,27 +773,57 @@ exports.getDueThisMonth = async (req, res) => {
 
     const today = todayDate();
 
-    const data = installments.map((item) => {
-      const json = item.toJSON();
-      const isPaid = json.status === "paid";
-      const isOverdue = !isPaid && json.dueDate < today;
+    const data = installments
+      // Installment #1 is always the advance paid at sale time (see saleController),
+      // not a real monthly due - a customer who just bought this month and paid
+      // their advance shouldn't show up in the due list.
+      .filter((item) => item.installmentNo !== 1)
+      .map((item) => {
+        const json = item.toJSON();
+        const isPaid = json.status === "paid";
+        const isOverdue = !isPaid && json.dueDate < today;
+        const planMonthsForSale = json.sale?.installmentMonths;
+        const frequency = json.sale?.installmentFrequency;
 
+        const category =
+          frequency === "daily"
+            ? "Daily"
+            : planMonthsForSale === 12
+            ? "Yearly"
+            : planMonthsForSale === 6
+            ? "6 Months"
+            : planMonthsForSale === 3
+            ? "3 Months"
+            : "Other";
+
+        return {
+          id: json.id,
+          saleId: json.saleId,
+          installmentNo: json.installmentNo,
+          dueDate: json.dueDate,
+          amount: json.amount,
+          paidAmount: json.paidAmount,
+          remainingAmount: json.remainingAmount,
+          status: json.status,
+          displayStatus: isPaid ? "paid" : isOverdue ? "overdue" : json.status,
+          category,
+          customerName: json.customer?.name || "-",
+          customerPhone: json.customer?.phone || "-",
+          productName: json.sale?.product?.productName || "-",
+          invoiceNo: json.sale?.invoiceNo || "-",
+        };
+      });
+
+    const CATEGORY_ORDER = ["Yearly", "6 Months", "3 Months", "Daily", "Other"];
+    const groups = CATEGORY_ORDER.map((category) => {
+      const items = data.filter((d) => d.category === category);
       return {
-        id: json.id,
-        saleId: json.saleId,
-        installmentNo: json.installmentNo,
-        dueDate: json.dueDate,
-        amount: json.amount,
-        paidAmount: json.paidAmount,
-        remainingAmount: json.remainingAmount,
-        status: json.status,
-        displayStatus: isPaid ? "paid" : isOverdue ? "overdue" : json.status,
-        customerName: json.customer?.name || "-",
-        customerPhone: json.customer?.phone || "-",
-        productName: json.sale?.product?.productName || "-",
-        invoiceNo: json.sale?.invoiceNo || "-",
+        category,
+        count: items.length,
+        totalAmount: items.reduce((s, d) => s + Number(d.amount || 0), 0),
+        items,
       };
-    });
+    }).filter((g) => g.count > 0);
 
     const summary = {
       month: monthKey,
@@ -809,7 +839,7 @@ exports.getDueThisMonth = async (req, res) => {
       ),
     };
 
-    res.json({ summary, installments: data });
+    res.json({ summary, installments: data, groups });
   } catch (error) {
     res.status(500).json({
       message: "Due this month report failed",
