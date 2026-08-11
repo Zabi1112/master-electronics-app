@@ -94,12 +94,43 @@ const getMonthlyFinance = async (month) => {
   };
 };
 
-const calculateSharesForMonth = async (month) => {
-  const monthly = await getMonthlyFinance(month);
+// `preloaded` lets callers that need this for many months at once (see
+// calculatePartnerAllTimeBalances below) pass in settings/partners fetched
+// once up front instead of every function re-fetching the same
+// month-independent rows on every call.
+const calculateSharesForMonth = async (month, preloaded = {}) => {
+  const settings = preloaded.settings || (await getOrCreateSettings());
+  const partners =
+    preloaded.partners ||
+    (await Partner.findAll({
+      where: { status: "active" },
+    }));
 
-  const partners = await Partner.findAll({
-    where: { status: "active" },
+  const { start, end } = getMonthRange(month);
+
+  const grossProfit = await sumField(Sale, "profitRecovered", {
+    createdAt: {
+      [Op.gte]: start,
+      [Op.lte]: end,
+    },
   });
+
+  const monthlyExpenses = await sumField(Expense, "amount", {
+    expenseDate: {
+      [Op.gte]: start.toISOString().split("T")[0],
+      [Op.lte]: end.toISOString().split("T")[0],
+    },
+  });
+
+  const profitBeforeDonation = Math.max(
+    0,
+    Number(grossProfit || 0) - Number(monthlyExpenses || 0)
+  );
+
+  const donationAmount =
+    profitBeforeDonation * (Number(settings.donationPercentage || 0) / 100);
+
+  const netProfitAfterDonation = profitBeforeDonation - donationAmount;
 
   const totalInvestment = partners.reduce(
     (sum, p) => sum + Number(p.totalInvested || 0),
@@ -109,7 +140,7 @@ const calculateSharesForMonth = async (month) => {
   const shares = partners.map((partner) => {
     let percentage = 0;
 
-    if (monthly.settings.profitShareMethod === "equal") {
+    if (settings.profitShareMethod === "equal") {
       percentage = partners.length ? 100 / partners.length : 0;
     } else {
       percentage = totalInvestment
@@ -118,7 +149,7 @@ const calculateSharesForMonth = async (month) => {
     }
 
     const profitShare =
-      Number(monthly.netProfitAfterDonation || 0) * (percentage / 100);
+      Number(netProfitAfterDonation || 0) * (percentage / 100);
 
     return {
       partnerId: partner.id,
@@ -132,25 +163,35 @@ const calculateSharesForMonth = async (month) => {
   });
 
   return {
-    ...monthly,
-    method: monthly.settings.profitShareMethod,
+    settings,
+    month,
+    grossProfit,
+    monthlyExpenses,
+    profitBeforeDonation,
+    donationPercentage: settings.donationPercentage,
+    donationAmount,
+    netProfitAfterDonation,
+    method: settings.profitShareMethod,
     totalInvestment,
     shares,
   };
 };
 
 const calculatePartnerAllTimeBalances = async (targetMonth) => {
-  const partners = await Partner.findAll({
-    where: { status: "active" },
-  });
+  // settings/partners are identical for every month below — fetched once
+  // instead of being redundantly re-queried on every loop iteration — and
+  // the month-by-month calculations (previously a sequential for-loop, one
+  // DB round-trip pair per month) are independent of each other, so they
+  // run concurrently instead. Measured ~6.6s for a handful of months
+  // sequentially against production; this is the same pattern that made
+  // the dashboard endpoint take 13s.
+  const [partners, settings, allSales] = await Promise.all([
+    Partner.findAll({ where: { status: "active" } }),
+    getOrCreateSettings(),
+    Sale.findAll({ attributes: ["createdAt"], raw: true }),
+  ]);
 
-  const now = new Date();
   const currentMonth = targetMonth || currentMonthKey();
-
-  const allSales = await Sale.findAll({
-    attributes: ["createdAt"],
-    raw: true,
-  });
 
   const monthsSet = new Set();
 
@@ -162,10 +203,16 @@ const calculatePartnerAllTimeBalances = async (targetMonth) => {
 
   const months = [...monthsSet].sort();
 
+  const monthCalcs = await Promise.all(
+    months.map((month) =>
+      calculateSharesForMonth(month, { settings, partners })
+    )
+  );
+
   const monthlySharesMap = {};
 
-  for (const month of months) {
-    const calc = await calculateSharesForMonth(month);
+  months.forEach((month, i) => {
+    const calc = monthCalcs[i];
 
     calc.shares.forEach((share) => {
       if (!monthlySharesMap[share.partnerId]) {
@@ -189,7 +236,7 @@ const calculatePartnerAllTimeBalances = async (targetMonth) => {
         netProfit: calc.netProfitAfterDonation,
       });
     });
-  }
+  });
 
   return partners.map((partner) => {
     const shareInfo = monthlySharesMap[partner.id] || {

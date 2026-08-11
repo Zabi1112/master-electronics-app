@@ -42,8 +42,27 @@ exports.protect = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({
-      message: "Not authorized",
+    // Only a genuinely bad/expired token is a 401. Anything else (e.g. the
+    // User lookup failing because the DB connection pool is under
+    // pressure) is an infrastructure failure, not an auth failure — the
+    // frontend wipes the stored token and force-reloads to /login on any
+    // 401, so misclassifying a transient DB hiccup here was logging
+    // everyone out and making a slow request look like the app crashed.
+    if (
+      error.name === "JsonWebTokenError" ||
+      error.name === "TokenExpiredError" ||
+      error.name === "NotBeforeError"
+    ) {
+      return res.status(401).json({
+        message: "Not authorized",
+        error: error.message,
+      });
+    }
+
+    console.error("Auth middleware failure (not a token issue):", error.message);
+
+    res.status(503).json({
+      message: "Service temporarily unavailable, please retry",
       error: error.message,
     });
   }
