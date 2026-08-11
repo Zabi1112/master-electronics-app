@@ -73,22 +73,11 @@ exports.payInstallment = async (req, res) => {
       return res.status(400).json({ message: "Invalid payment amount" });
     }
 
-    const sale = await Sale.findByPk(installment.saleId, {
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-
-    if (!sale) {
-      await t.rollback();
-      return res.status(404).json({ message: "Sale not found" });
-    }
-
-    const isLastInstallment =
-      installment.installmentNo === Number(sale.installmentMonths);
-
     // Admin-only: at the final installment, the price actually being
-    // settled for can be renegotiated down. Validated up front so we fail
-    // fast before touching any balances.
+    // settled for can be renegotiated down. Everything checkable without
+    // the Sale row is validated up front; the "is this actually the last
+    // installment" check happens later once Sale is loaded (see below —
+    // deliberately NOT fetched here, to preserve lock order, see note there).
     let reduceFinalAmount = null;
     let previousFinalAmountForLog = null;
 
@@ -101,14 +90,6 @@ exports.payInstallment = async (req, res) => {
         await t.rollback();
         return res.status(403).json({
           message: "Only an admin can reduce the sale's final amount",
-        });
-      }
-
-      if (!isLastInstallment) {
-        await t.rollback();
-        return res.status(400).json({
-          message:
-            "Final amount can only be reduced when paying the last installment",
         });
       }
 
@@ -260,7 +241,34 @@ exports.payInstallment = async (req, res) => {
     installment.receivedBy = req.user.id;
     installment.notes = notes || installment.notes;
 
+    // Sale is locked here — after the installment row and any future
+    // installment rows are already locked/settled above — so every
+    // transaction that touches a sale's installments locks rows in the same
+    // order (installment(s) first, sale last). Locking Sale any earlier
+    // (e.g. up front, to read installmentMonths) lets two concurrent
+    // payments on the same sale lock rows in opposite orders and deadlock.
+    const sale = await Sale.findByPk(installment.saleId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!sale) {
+      await t.rollback();
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
     if (reduceFinalAmount !== null) {
+      const isLastInstallment =
+        installment.installmentNo === Number(sale.installmentMonths);
+
+      if (!isLastInstallment) {
+        await t.rollback();
+        return res.status(400).json({
+          message:
+            "Final amount can only be reduced when paying the last installment",
+        });
+      }
+
       const projectedPaid = Number(sale.paidAmount || 0) + installmentPaidNow;
 
       if (reduceFinalAmount < projectedPaid) {
