@@ -104,26 +104,56 @@ const initializeApp = async () => {
   }
 };
 
-const startServer = async () => {
-  try {
-    await initializeApp();
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+// Cold starts (a fresh serverless instance) need connectDB() + sync() +
+// the backfill script to finish before any request touches the DB. This
+// gate makes every request — including several that land concurrently on
+// the very first cold request — await the SAME initialization promise
+// instead of racing ahead of it or each triggering their own redundant
+// sync()/backfill run. If init fails (e.g. a transient DB blip during cold
+// start), the promise is cleared so the next request retries instead of
+// this instance being silently broken for its whole warm lifetime.
+let initPromise = null;
+
+const ensureInitialized = () => {
+  if (!initPromise) {
+    initPromise = initializeApp().catch((error) => {
+      initPromise = null;
+      throw error;
     });
-  } catch (error) {
-    console.error("Failed to start server:", error.message);
-    process.exit(1);
   }
+  return initPromise;
 };
+
+app.use((req, res, next) => {
+  ensureInitialized().then(
+    () => next(),
+    (error) => {
+      console.error("Request blocked, initialization failed:", error.message);
+      res.status(503).json({
+        message: "Service is starting up, please try again",
+      });
+    }
+  );
+});
 
 registerRoutes();
 
 if (require.main === module) {
-  startServer();
+  ensureInitialized()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("Failed to start server:", error.message);
+      process.exit(1);
+    });
 } else {
-  initializeApp().catch((error) => {
-    console.error("Failed to initialize app on import:", error.message);
-  });
+  // Kick off initialization immediately on cold start rather than waiting
+  // for the first request to trigger it — the gate middleware above still
+  // awaits it either way, this just gets a head start.
+  ensureInitialized().catch(() => {});
 }
 
 module.exports = app;
