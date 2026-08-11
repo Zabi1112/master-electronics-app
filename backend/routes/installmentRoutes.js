@@ -6,6 +6,7 @@ const {
   getPendingInstallments,
   getOverdueInstallments,
   getInstallmentCustomers,
+  getAllInstallmentSaleItems,
   getCustomerInstallmentItems,
   getSaleInstallments,
   getMonthlyCollections,
@@ -22,6 +23,12 @@ router.get(
   "/customers",
   allowRoles("admin", "manager", "salesman", "accounts"),
   getInstallmentCustomers
+);
+
+router.get(
+  "/items",
+  allowRoles("admin", "manager", "salesman", "accounts"),
+  getAllInstallmentSaleItems
 );
 
 router.get(

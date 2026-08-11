@@ -32,6 +32,9 @@ const Sales = () => {
   const [sales, setSales] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [searchMode, setSearchMode] = useState("name"); // "name" | "item"
+  const [searchText, setSearchText] = useState("");
+  const [saleTypeFilter, setSaleTypeFilter] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
@@ -70,6 +73,24 @@ const Sales = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  const filteredSales = useMemo(() => {
+    const text = searchText.trim().toLowerCase();
+
+    return sales.filter((sale) => {
+      const matchesType = !saleTypeFilter || sale.saleType === saleTypeFilter;
+
+      if (!matchesType) return false;
+      if (!text) return true;
+
+      const haystack =
+        searchMode === "name"
+          ? sale.customer?.name || ""
+          : sale.product?.productName || "";
+
+      return haystack.toLowerCase().includes(text);
+    });
+  }, [sales, searchMode, searchText, saleTypeFilter]);
 
   const selectedProduct = useMemo(() => {
     return products.find((p) => String(p.id) === String(form.productId));
@@ -571,8 +592,69 @@ const Sales = () => {
         </form>
       )}
 
+      <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-5 mb-6">
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="flex gap-2 bg-black/60 border border-yellow-600/30 rounded-xl p-1 w-fit">
+            {[
+              { key: "name", label: "Name" },
+              { key: "item", label: "Item" },
+            ].map((mode) => (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={() => setSearchMode(mode.key)}
+                className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                  searchMode === mode.key
+                    ? "bg-yellow-500 text-black"
+                    : "text-yellow-300"
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+
+          <input
+            type="text"
+            className="flex-1 px-4 py-3 rounded-xl bg-white"
+            placeholder={
+              searchMode === "name"
+                ? "Search by customer name..."
+                : "Search by item / product name..."
+            }
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+
+          <select
+            className="px-4 py-3 rounded-xl bg-white"
+            value={saleTypeFilter}
+            onChange={(e) => setSaleTypeFilter(e.target.value)}
+          >
+            <option value="">All Types</option>
+            <option value="cash">Cash</option>
+            <option value="installment">Installment</option>
+          </select>
+
+          {(searchText || saleTypeFilter) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchText("");
+                setSaleTypeFilter("");
+              }}
+              className="bg-gray-700 text-white font-bold px-5 py-3 rounded-xl"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      </div>
+
       {loading ? (
         <p className="text-yellow-400">Loading sales...</p>
+      ) : filteredSales.length === 0 ? (
+        <p className="text-gray-400">No sales match your search.</p>
       ) : (
         <>
           <div className="hidden lg:block bg-black/70 border border-yellow-600/30 rounded-2xl overflow-hidden">
@@ -592,7 +674,7 @@ const Sales = () => {
               </thead>
 
               <tbody>
-                {sales.map((sale) => (
+                {filteredSales.map((sale) => (
                   <tr
                     key={sale.id}
                     className="border-t border-yellow-600/20 text-gray-200"
@@ -631,7 +713,7 @@ const Sales = () => {
           </div>
 
           <div className="lg:hidden space-y-4">
-            {sales.map((sale) => (
+            {filteredSales.map((sale) => (
               <div
                 key={sale.id}
                 className="bg-black/75 border border-yellow-600/30 rounded-2xl p-4"

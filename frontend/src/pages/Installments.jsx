@@ -42,6 +42,9 @@ const Installments = () => {
   const [view, setView] = useState("customers"); // "customers" | "collections"
 
   const [customers, setCustomers] = useState([]);
+  const [allItems, setAllItems] = useState([]);
+  const [searchMode, setSearchMode] = useState("name"); // "name" | "mobile" | "item"
+  const [searchText, setSearchText] = useState("");
   const [sales, setSales] = useState([]);
   const [installments, setInstallments] = useState([]);
 
@@ -71,6 +74,7 @@ const Installments = () => {
     amount: "",
     fineDiscount: 0,
     notes: "",
+    newFinalAmount: "",
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [lastPayment, setLastPayment] = useState(null);
@@ -97,6 +101,16 @@ const Installments = () => {
       setError(err.response?.data?.message || "Failed to load customers");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAllItems = async () => {
+    try {
+      const res = await api.get("/installments/items");
+      setAllItems(res.data || []);
+    } catch {
+      // Search-by-item just degrades to no matches if this fails silently;
+      // don't block the main customer list over it.
     }
   };
 
@@ -180,7 +194,36 @@ const Installments = () => {
 
   useEffect(() => {
     loadCustomers();
+    loadAllItems();
   }, []);
+
+  const filteredCustomers = useMemo(() => {
+    const text = searchText.trim().toLowerCase();
+    if (!text) return customers;
+
+    if (searchMode === "name") {
+      return customers.filter((c) =>
+        (c.name || "").toLowerCase().includes(text)
+      );
+    }
+
+    if (searchMode === "mobile") {
+      return customers.filter((c) =>
+        (c.phone || "").toLowerCase().includes(text)
+      );
+    }
+
+    // item
+    const matchingCustomerIds = new Set(
+      allItems
+        .filter((sale) =>
+          (sale.product?.productName || "").toLowerCase().includes(text)
+        )
+        .map((sale) => sale.customerId)
+    );
+
+    return customers.filter((c) => matchingCustomerIds.has(c.id));
+  }, [customers, allItems, searchMode, searchText]);
 
   useEffect(() => {
     if (view === "collections" && !collections) {
@@ -213,22 +256,39 @@ const Installments = () => {
       amount: item.liveTotalPayable || item.remainingAmount || "",
       fineDiscount: 0,
       notes: "",
+      newFinalAmount: "",
     });
   };
+
+  const isLastInstallmentForPayment =
+    !!paymentModal &&
+    !!selectedSale &&
+    paymentModal.installmentNo === selectedSale.installmentMonths;
 
   const submitPayment = async (e) => {
     e.preventDefault();
     if (submittingPayment) return;
 
+    if (paymentForm.newFinalAmount && !String(paymentForm.notes).trim()) {
+      setError("A note is required when reducing the final sale amount");
+      return;
+    }
+
     setError("");
     setSubmittingPayment(true);
 
     try {
-      const res = await api.put(`/installments/${paymentModal.id}/pay`, {
+      const payload = {
         amount: Number(paymentForm.amount || 0),
         fineDiscount: Number(paymentForm.fineDiscount || 0),
         notes: paymentForm.notes,
-      });
+      };
+
+      if (paymentForm.newFinalAmount !== "") {
+        payload.newFinalAmount = Number(paymentForm.newFinalAmount);
+      }
+
+      const res = await api.put(`/installments/${paymentModal.id}/pay`, payload);
 
       const paidInstallment = res.data.installment;
 
@@ -241,6 +301,7 @@ const Installments = () => {
         excessAmount: res.data.excessAmount,
         reamortized: res.data.reamortized,
         futureCount: res.data.updatedFutureInstallments?.length || 0,
+        priceReduced: res.data.priceReduced || null,
       });
 
       setPaymentModal(null);
@@ -402,11 +463,62 @@ const Installments = () => {
             Installment Customers
           </h2>
 
+          <div className="bg-black/70 border border-yellow-600/30 rounded-2xl p-4 md:p-5 mb-6">
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="flex gap-2 bg-black/60 border border-yellow-600/30 rounded-xl p-1 w-fit">
+                {[
+                  { key: "name", label: "Name" },
+                  { key: "mobile", label: "Mobile" },
+                  { key: "item", label: "Item" },
+                ].map((mode) => (
+                  <button
+                    key={mode.key}
+                    type="button"
+                    onClick={() => setSearchMode(mode.key)}
+                    className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                      searchMode === mode.key
+                        ? "bg-yellow-500 text-black"
+                        : "text-yellow-300"
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                type="text"
+                className="flex-1 px-4 py-3 rounded-xl bg-white"
+                placeholder={
+                  searchMode === "name"
+                    ? "Search by customer name..."
+                    : searchMode === "mobile"
+                    ? "Search by mobile number..."
+                    : "Search by item / product name..."
+                }
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+              />
+
+              {searchText && (
+                <button
+                  type="button"
+                  onClick={() => setSearchText("")}
+                  className="bg-gray-700 text-white font-bold px-5 py-3 rounded-xl"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+
           {loading ? (
             <p className="text-yellow-400">Loading customers...</p>
+          ) : filteredCustomers.length === 0 ? (
+            <p className="text-gray-400">No customers match your search.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {customers.map((customer) => (
+              {filteredCustomers.map((customer) => (
                 <button
                   key={customer.id}
                   onClick={() => loadCustomerItems(customer)}
@@ -862,14 +974,48 @@ const Installments = () => {
               }
             />
 
+            {isAdmin && isLastInstallmentForPayment && (
+              <div className="bg-purple-600/10 border border-purple-500/30 rounded-xl p-3 mb-3">
+                <label className="block text-xs text-purple-300 mb-1">
+                  Reduce Final Sale Amount To (optional, admin — this is the
+                  last installment)
+                </label>
+                <input
+                  type="number"
+                  className="w-full px-4 py-3 rounded-xl bg-white"
+                  placeholder={`Current final amount: Rs. ${money(
+                    selectedSale?.finalAmount
+                  )}`}
+                  value={paymentForm.newFinalAmount}
+                  onChange={(e) =>
+                    setPaymentForm({
+                      ...paymentForm,
+                      newFinalAmount: e.target.value,
+                    })
+                  }
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Settling for less than the scheduled total? Set the new
+                  total here — the remaining balance is forgiven and this
+                  becomes the item's sale price everywhere. Requires a note
+                  below.
+                </p>
+              </div>
+            )}
+
             <textarea
               className="w-full px-4 py-3 rounded-xl bg-white"
-              placeholder="Notes"
+              placeholder={
+                paymentForm.newFinalAmount
+                  ? "Notes (required — reason for reducing the final amount)"
+                  : "Notes"
+              }
               rows="3"
               value={paymentForm.notes}
               onChange={(e) =>
                 setPaymentForm({ ...paymentForm, notes: e.target.value })
               }
+              required={!!paymentForm.newFinalAmount}
             />
 
             <div className="grid grid-cols-2 gap-3 mt-5">

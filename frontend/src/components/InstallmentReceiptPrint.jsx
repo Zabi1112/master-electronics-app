@@ -103,10 +103,22 @@ const InstallmentReceiptPrint = ({
             {payment?.reamortized && (
               <tr className="bg-blue-500/10 text-blue-200">
                 <td className="border border-[#2b2b34] px-4 py-3 font-semibold">
-                  Extra Rs. {money(payment.excessAmount)} Applied Ahead
+                  {payment.excessAmount > 0
+                    ? `Extra Rs. ${money(payment.excessAmount)} Applied Ahead`
+                    : `Shortfall Rs. ${money(Math.abs(payment.excessAmount))} Carried Forward`}
                 </td>
                 <td className="border border-[#2b2b34] px-4 py-3 text-right">
-                  Reduced next {payment.futureCount} installment(s)
+                  {payment.excessAmount > 0 ? "Reduced" : "Increased"} next {payment.futureCount} installment(s)
+                </td>
+              </tr>
+            )}
+            {payment?.priceReduced && (
+              <tr className="bg-green-500/10 text-green-200">
+                <td className="border border-[#2b2b34] px-4 py-3 font-semibold">
+                  Final Sale Amount Reduced
+                </td>
+                <td className="border border-[#2b2b34] px-4 py-3 text-right">
+                  Rs. {money(payment.priceReduced.previousFinalAmount)} → Rs. {money(payment.priceReduced.newFinalAmount)}
                 </td>
               </tr>
             )}

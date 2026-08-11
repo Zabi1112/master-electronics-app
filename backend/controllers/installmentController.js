@@ -48,7 +48,7 @@ exports.payInstallment = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
-    const { amount, fineDiscount = 0, notes } = req.body;
+    const { amount, fineDiscount = 0, notes, newFinalAmount } = req.body;
 
     const installment = await Installment.findByPk(req.params.id, {
       transaction: t,
@@ -73,6 +73,60 @@ exports.payInstallment = async (req, res) => {
       return res.status(400).json({ message: "Invalid payment amount" });
     }
 
+    const sale = await Sale.findByPk(installment.saleId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!sale) {
+      await t.rollback();
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    const isLastInstallment =
+      installment.installmentNo === Number(sale.installmentMonths);
+
+    // Admin-only: at the final installment, the price actually being
+    // settled for can be renegotiated down. Validated up front so we fail
+    // fast before touching any balances.
+    let reduceFinalAmount = null;
+    let previousFinalAmountForLog = null;
+
+    if (
+      newFinalAmount !== undefined &&
+      newFinalAmount !== null &&
+      newFinalAmount !== ""
+    ) {
+      if (req.user.role !== "admin") {
+        await t.rollback();
+        return res.status(403).json({
+          message: "Only an admin can reduce the sale's final amount",
+        });
+      }
+
+      if (!isLastInstallment) {
+        await t.rollback();
+        return res.status(400).json({
+          message:
+            "Final amount can only be reduced when paying the last installment",
+        });
+      }
+
+      if (!notes || !String(notes).trim()) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "A note is required when reducing the final sale amount",
+        });
+      }
+
+      reduceFinalAmount = Number(newFinalAmount);
+
+      if (!Number.isFinite(reduceFinalAmount) || reduceFinalAmount < 0) {
+        await t.rollback();
+        return res.status(400).json({ message: "Invalid final amount" });
+      }
+    }
+
     const fineData = calculateFine(installment);
 
     const finalFineAmount = Math.max(0, fineData.fineAmount - discountFine);
@@ -80,10 +134,19 @@ exports.payInstallment = async (req, res) => {
     const currentRemaining = Number(installment.remainingAmount || 0);
     const totalPayable = currentRemaining + Number(finalFineAmount);
 
-    let excessAmount = 0;
-    let futureInstallments = [];
+    // Signed delta: positive = customer overpaid this installment, negative
+    // = customer underpaid it. Both get re-amortized across future
+    // pending/partial installments the same way (grow or shrink their
+    // combined balance by exactly |delta|) — the only difference is an
+    // underpayment can only be pushed forward if a future installment
+    // actually exists to absorb it; otherwise it stays a local partial
+    // payment like before.
+    const delta = payAmount - totalPayable;
 
-    if (payAmount > totalPayable) {
+    let futureInstallments = [];
+    let reamortizedDelta = 0;
+
+    if (delta !== 0 && payAmount >= finalFineAmount) {
       futureInstallments = await Installment.findAll({
         where: {
           saleId: installment.saleId,
@@ -100,58 +163,67 @@ exports.payInstallment = async (req, res) => {
         0
       );
 
-      excessAmount = payAmount - totalPayable;
-
-      if (excessAmount > futureTotalRemaining) {
-        await t.rollback();
-        return res.status(400).json({
-          message:
-            "Payment amount cannot be greater than the total remaining balance of the sale",
-          totalPayable: totalPayable + futureTotalRemaining,
-        });
-      }
-
-      // Re-amortize: shrink the still-pending future installments so their
-      // combined remaining balance drops by exactly the excess paid now.
-      const newFutureTotal = futureTotalRemaining - excessAmount;
-      const count = futureInstallments.length;
-      let allocated = 0;
-
-      for (let i = 0; i < count; i++) {
-        const inst = futureInstallments[i];
-        const isLast = i === count - 1;
-        const share = isLast
-          ? Math.round((newFutureTotal - allocated) * 100) / 100
-          : Math.round((newFutureTotal / count) * 100) / 100;
-
-        allocated += share;
-
-        const paidPart = Number(inst.paidAmount || 0);
-        inst.amount = paidPart + share;
-        inst.remainingAmount = share;
-
-        if (share <= 0) {
-          inst.remainingAmount = 0;
-          inst.status = "paid";
-          inst.paidDate = inst.paidDate || todayDate();
-        } else {
-          inst.status = paidPart > 0 ? "partial" : "pending";
+      if (delta > 0) {
+        if (delta > futureTotalRemaining) {
+          await t.rollback();
+          return res.status(400).json({
+            message:
+              "Payment amount cannot be greater than the total remaining balance of the sale",
+            totalPayable: totalPayable + futureTotalRemaining,
+          });
         }
 
-        await inst.save({ transaction: t });
+        reamortizedDelta = delta;
+      } else if (futureInstallments.length > 0) {
+        reamortizedDelta = delta;
+      }
+
+      if (reamortizedDelta !== 0) {
+        // Re-amortize: shrink (excess) or grow (shortfall) the still-pending
+        // future installments so their combined remaining balance moves by
+        // exactly |reamortizedDelta|.
+        const newFutureTotal = futureTotalRemaining - reamortizedDelta;
+        const count = futureInstallments.length;
+        let allocated = 0;
+
+        for (let i = 0; i < count; i++) {
+          const inst = futureInstallments[i];
+          const isFinalShare = i === count - 1;
+          const share = isFinalShare
+            ? Math.round((newFutureTotal - allocated) * 100) / 100
+            : Math.round((newFutureTotal / count) * 100) / 100;
+
+          allocated += share;
+
+          const paidPart = Number(inst.paidAmount || 0);
+          inst.amount = paidPart + share;
+          inst.remainingAmount = share;
+
+          if (share <= 0) {
+            inst.remainingAmount = 0;
+            inst.status = "paid";
+            inst.paidDate = inst.paidDate || todayDate();
+          } else {
+            inst.status = paidPart > 0 ? "partial" : "pending";
+          }
+
+          await inst.save({ transaction: t });
+        }
+      } else {
+        futureInstallments = [];
       }
     }
 
     let finePaidNow;
     let installmentPaidNow;
 
-    if (excessAmount > 0) {
-      // This installment absorbs the full principal payment, including the
-      // excess — its own "amount" grows to match so it reads as fully paid
-      // at the amount the customer actually handed over for it.
+    if (reamortizedDelta !== 0) {
+      // This installment fully settles — the excess/shortfall in principal
+      // has been redistributed across future installments, so its own
+      // "amount" grows or shrinks to match exactly what was collected now.
       finePaidNow = finalFineAmount;
       installmentPaidNow = payAmount - finePaidNow;
-      installment.amount = Number(installment.amount || 0) + excessAmount;
+      installment.amount = Number(installment.amount || 0) + reamortizedDelta;
     } else {
       let remainingPayment = payAmount;
       finePaidNow = Math.min(remainingPayment, finalFineAmount);
@@ -168,40 +240,61 @@ exports.payInstallment = async (req, res) => {
     installment.paidAmount =
       Number(installment.paidAmount || 0) + installmentPaidNow;
 
-    installment.remainingAmount =
-      Number(installment.remainingAmount || 0) - installmentPaidNow;
+    if (reamortizedDelta !== 0) {
+      installment.remainingAmount = 0;
+      installment.status = "paid";
+      installment.paidDate = installment.paidDate || todayDate();
+    } else {
+      installment.remainingAmount =
+        Number(installment.remainingAmount || 0) - installmentPaidNow;
+
+      if (installment.remainingAmount <= 0) {
+        installment.remainingAmount = 0;
+        installment.status = "paid";
+        installment.paidDate = todayDate();
+      } else {
+        installment.status = "partial";
+      }
+    }
 
     installment.receivedBy = req.user.id;
     installment.notes = notes || installment.notes;
 
-    if (installment.remainingAmount <= 0) {
+    if (reduceFinalAmount !== null) {
+      const projectedPaid = Number(sale.paidAmount || 0) + installmentPaidNow;
+
+      if (reduceFinalAmount < projectedPaid) {
+        await t.rollback();
+        return res.status(400).json({
+          message:
+            "New final amount cannot be less than what has already been paid",
+        });
+      }
+
+      previousFinalAmountForLog = Number(sale.finalAmount || 0);
+      sale.finalAmount = reduceFinalAmount;
+
+      // Last installment closes out fully at the renegotiated price — any
+      // remaining balance on it is forgiven, not left dangling as partial.
+      installment.amount = Number(installment.paidAmount || 0);
       installment.remainingAmount = 0;
       installment.status = "paid";
-      installment.paidDate = todayDate();
-    } else {
-      installment.status = "partial";
+      installment.paidDate = installment.paidDate || todayDate();
     }
 
     await installment.save({ transaction: t });
 
     const totalPrincipalPaidNow = installmentPaidNow;
 
-    const sale = await Sale.findByPk(installment.saleId, {
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-
-    if (!sale) {
-      await t.rollback();
-      return res.status(404).json({ message: "Sale not found" });
-    }
-
     const previousPaid = Number(sale.paidAmount || 0);
     const newPaid = previousPaid + totalPrincipalPaidNow;
 
     sale.paidAmount = newPaid;
+
     sale.remainingAmount =
-      Number(sale.remainingAmount || 0) - totalPrincipalPaidNow;
+      reduceFinalAmount !== null
+        ? Math.max(0, reduceFinalAmount - newPaid)
+        : Number(sale.remainingAmount || 0) - totalPrincipalPaidNow;
 
     if (sale.remainingAmount < 0) {
       sale.remainingAmount = 0;
@@ -223,7 +316,14 @@ exports.payInstallment = async (req, res) => {
     }
 
     const totalPurchase = Number(sale.purchasePrice || 0);
-    const totalProfit = Number(sale.profit || 0);
+
+    let totalProfit;
+    if (reduceFinalAmount !== null) {
+      totalProfit = Number(sale.finalAmount || 0) - totalPurchase;
+      sale.profit = totalProfit;
+    } else {
+      totalProfit = Number(sale.profit || 0);
+    }
 
     sale.profitRecovered = Math.max(0, newPaid - totalPurchase);
 
@@ -275,15 +375,26 @@ exports.payInstallment = async (req, res) => {
 
     await t.commit();
 
+    let description = `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow}`;
+
+    if (reamortizedDelta > 0) {
+      description += ` | Excess Rs. ${reamortizedDelta} re-amortized across ${futureInstallments.length} future installment(s)`;
+    } else if (reamortizedDelta < 0) {
+      description += ` | Shortfall Rs. ${Math.abs(
+        reamortizedDelta
+      )} carried forward across ${futureInstallments.length} future installment(s)`;
+    }
+
+    if (reduceFinalAmount !== null) {
+      description += ` | Final sale amount reduced Rs. ${previousFinalAmountForLog} -> Rs. ${reduceFinalAmount}: ${notes}`;
+    }
+
     await logActivity({
       req,
       action: "pay",
       module: "installments",
       recordId: installment.id,
-      description:
-        excessAmount > 0
-          ? `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow} | Excess Rs. ${excessAmount} re-amortized across ${futureInstallments.length} future installment(s)`
-          : `Received installment payment Rs. ${installmentPaidNow} | Fine Rs. ${finePaidNow}`,
+      description,
       newData: {
         installment: installment.toJSON(),
         sale: sale.toJSON(),
@@ -292,10 +403,17 @@ exports.payInstallment = async (req, res) => {
           installmentPaid: installmentPaidNow,
           finePaid: finePaidNow,
           fineDiscount: discountFine,
-          excessAmount,
+          excessAmount: reamortizedDelta,
           reamortizedInstallments: futureInstallments.map((inst) =>
             inst.toJSON()
           ),
+          priceReduced:
+            reduceFinalAmount !== null
+              ? {
+                  previousFinalAmount: previousFinalAmountForLog,
+                  newFinalAmount: reduceFinalAmount,
+                }
+              : null,
         },
       },
     });
@@ -307,9 +425,16 @@ exports.payInstallment = async (req, res) => {
       fineDiscount: discountFine,
       finePaid: finePaidNow,
       installmentPaid: installmentPaidNow,
-      excessAmount,
-      reamortized: excessAmount > 0,
+      excessAmount: reamortizedDelta,
+      reamortized: reamortizedDelta !== 0,
       updatedFutureInstallments: futureInstallments,
+      priceReduced:
+        reduceFinalAmount !== null
+          ? {
+              previousFinalAmount: previousFinalAmountForLog,
+              newFinalAmount: reduceFinalAmount,
+            }
+          : null,
       installment,
       sale,
     });
@@ -459,6 +584,37 @@ exports.getCustomerInstallmentItems = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Get customer items failed",
+      error: error.message,
+    });
+  }
+};
+
+// Flat list of every installment sale (with customer + product) for the
+// search bar on the Installments page — lets the frontend filter by name,
+// mobile, or item without a drill-down per customer.
+exports.getAllInstallmentSaleItems = async (req, res) => {
+  try {
+    const sales = await Sale.findAll({
+      where: {
+        saleType: "installment",
+      },
+      include: [
+        {
+          model: Product,
+          as: "product",
+        },
+        {
+          model: Customer,
+          as: "customer",
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.json(sales);
+  } catch (error) {
+    res.status(500).json({
+      message: "Get installment sale items failed",
       error: error.message,
     });
   }
