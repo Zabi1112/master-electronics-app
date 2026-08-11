@@ -17,10 +17,81 @@ exports.getDashboardStats = async (req, res) => {
   try {
     const today = new Date().toISOString().split("T")[0];
 
-    const inStockBatches = await ProductBatch.findAll({
-      where: { remainingQuantity: { [Op.gt]: 0 } },
-      include: [{ model: Product, as: "product", attributes: ["salePrice"] }],
-    });
+    // All of these are independent reads — none depends on another's
+    // result — so they're fired together instead of one-by-one. Run
+    // sequentially this was ~24 separate round-trips to the DB (measured
+    // ~13s in production), which was blowing past the serverless function
+    // timeout and hogging the connection pool while other pages' requests
+    // queued behind it.
+    const [
+      inStockBatches,
+      soldInventoryCost,
+      totalPartnerInvestment,
+      totalPartnerWithdrawals,
+      totalPartnerBalance,
+      totalDonationPaid,
+      totalExpenses,
+      totalSales,
+      cashSales,
+      installmentSales,
+      totalRegained,
+      totalProfit,
+      profitRecovered,
+      profitPending,
+      amountCirclingInstallments,
+      recoveredInstallments,
+      overdueAmount,
+      pendingInstallmentAmount,
+      shopAccount,
+      totalProducts,
+      inStockProducts,
+      soldProducts,
+      activeInstallmentSales,
+      clearedInstallmentSales,
+      overdueInstallmentsCount,
+    ] = await Promise.all([
+      ProductBatch.findAll({
+        where: { remainingQuantity: { [Op.gt]: 0 } },
+        include: [{ model: Product, as: "product", attributes: ["salePrice"] }],
+      }),
+      sumField(Sale, "purchasePrice"),
+      sumField(Partner, "totalInvested"),
+      sumField(Partner, "totalWithdrawn"),
+      sumField(Partner, "currentBalance"),
+      sumField(DonationRecord, "donationAmount", { status: "paid" }),
+      sumField(Expense, "amount"),
+      sumField(Sale, "finalAmount"),
+      sumField(Sale, "finalAmount", { saleType: "cash" }),
+      sumField(Sale, "finalAmount", { saleType: "installment" }),
+      sumField(Sale, "paidAmount"),
+      sumField(Sale, "profit"),
+      sumField(Sale, "profitRecovered"),
+      sumField(Sale, "profitPending"),
+      sumField(Sale, "remainingAmount", {
+        saleType: "installment",
+        status: { [Op.in]: ["active", "cleared"] },
+      }),
+      sumField(Sale, "paidAmount", { saleType: "installment" }),
+      sumField(Installment, "remainingAmount", {
+        dueDate: { [Op.lt]: today },
+        status: { [Op.in]: ["pending", "partial"] },
+      }),
+      sumField(Installment, "remainingAmount", {
+        status: { [Op.in]: ["pending", "partial"] },
+      }),
+      getOrCreateShopAccount(),
+      Product.count(),
+      Product.count({ where: { status: "in_stock" } }),
+      Product.count({ where: { status: "sold" } }),
+      Sale.count({ where: { saleType: "installment", status: "active" } }),
+      Sale.count({ where: { saleType: "installment", status: "cleared" } }),
+      Installment.count({
+        where: {
+          dueDate: { [Op.lt]: today },
+          status: { [Op.in]: ["pending", "partial"] },
+        },
+      }),
+    ]);
 
     const currentInventoryValue = inStockBatches.reduce(
       (sum, b) => sum + Number(b.remainingQuantity || 0) * Number(b.purchasePrice || 0),
@@ -33,34 +104,11 @@ exports.getDashboardStats = async (req, res) => {
       0
     );
 
-    const soldInventoryCost = await sumField(Sale, "purchasePrice");
-
     const totalInventoryPurchased =
       Number(currentInventoryValue || 0) + Number(soldInventoryCost || 0);
 
-    const totalPartnerInvestment = await sumField(Partner, "totalInvested");
-    const totalPartnerWithdrawals = await sumField(Partner, "totalWithdrawn");
-    const totalPartnerBalance = await sumField(Partner, "currentBalance");
-
-    const totalDonationPaid = await sumField(DonationRecord, "donationAmount", {
-      status: "paid",
-    });
-
-    const totalExpenses = await sumField(Expense, "amount");
-
     const totalSpent =
       Number(totalInventoryPurchased || 0) + Number(totalExpenses || 0);
-
-    const totalSales = await sumField(Sale, "finalAmount");
-    const cashSales = await sumField(Sale, "finalAmount", { saleType: "cash" });
-    const installmentSales = await sumField(Sale, "finalAmount", {
-      saleType: "installment",
-    });
-
-    const totalRegained = await sumField(Sale, "paidAmount");
-    const totalProfit = await sumField(Sale, "profit");
-    const profitRecovered = await sumField(Sale, "profitRecovered");
-    const profitPending = await sumField(Sale, "profitPending");
 
     const netProfitAfterExpenses =
       Number(profitRecovered || 0) -
@@ -74,55 +122,6 @@ exports.getDashboardStats = async (req, res) => {
       Number(totalRegained || 0) -
       Number(totalDonationPaid || 0) -
       Number(totalExpenses || 0);
-
-    const amountCirclingInstallments = await sumField(Sale, "remainingAmount", {
-      saleType: "installment",
-      status: { [Op.in]: ["active", "cleared"] },
-    });
-
-    const recoveredInstallments = await sumField(Sale, "paidAmount", {
-      saleType: "installment",
-    });
-
-    const overdueAmount = await sumField(Installment, "remainingAmount", {
-      dueDate: { [Op.lt]: today },
-      status: { [Op.in]: ["pending", "partial"] },
-    });
-
-    const pendingInstallmentAmount = await sumField(
-      Installment,
-      "remainingAmount",
-      {
-        status: { [Op.in]: ["pending", "partial"] },
-      }
-    );
-
-    const shopAccount = await getOrCreateShopAccount();
-
-    const totalProducts = await Product.count();
-
-    const inStockProducts = await Product.count({
-      where: { status: "in_stock" },
-    });
-
-    const soldProducts = await Product.count({
-      where: { status: "sold" },
-    });
-
-    const activeInstallmentSales = await Sale.count({
-      where: { saleType: "installment", status: "active" },
-    });
-
-    const clearedInstallmentSales = await Sale.count({
-      where: { saleType: "installment", status: "cleared" },
-    });
-
-    const overdueInstallmentsCount = await Installment.count({
-      where: {
-        dueDate: { [Op.lt]: today },
-        status: { [Op.in]: ["pending", "partial"] },
-      },
-    });
 
     res.json({
       finance: {
