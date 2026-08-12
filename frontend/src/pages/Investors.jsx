@@ -3,6 +3,14 @@ import api from "../api/api";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
+// Names of just this sale's investor-funded item(s) (the backend already
+// filters sale.items down to the ones this investor's batch funded).
+const fundedItemNames = (sale) =>
+  (sale.items || [])
+    .map((item) => item.productBatch?.product?.productName)
+    .filter(Boolean)
+    .join(", ") || "Product";
+
 const emptyInvestor = {
   name: "",
   phone: "",
@@ -550,7 +558,7 @@ const Investors = () => {
                               className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-black/40 border border-yellow-600/10 rounded-xl p-3 text-xs text-gray-200"
                             >
                               <span className="text-yellow-300 font-bold">
-                                {sale.productBatch?.product?.productName || "Product"}
+                                {fundedItemNames(sale)}
                               </span>
                               <span>Sale: Rs. {money(sale.finalAmount)}</span>
                               <span>Profit Recovered: Rs. {money(sale.profitRecovered)}</span>

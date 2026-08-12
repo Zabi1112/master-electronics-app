@@ -1,7 +1,7 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
 const { Op } = require("sequelize");
-const { Product, ProductBatch, Sale, Installment, Customer, User, ShopTransaction } = require("../models");
+const { Product, ProductBatch, Sale, SaleItem, Installment, Customer, User, ShopTransaction } = require("../models");
 const logActivity = require("../utils/activityLogger");
 const { recalculateShopBalance } = require("./shopAccountController");
 
@@ -38,10 +38,7 @@ exports.createSale = async (req, res) => {
     const {
       saleType,
       customerId,
-      productId,
-      quantity = 1,
-      salePrice,
-      cashPrice,
+      items,
       discount = 0,
       paidAmount = 0,
       advanceAmount,
@@ -51,54 +48,23 @@ exports.createSale = async (req, res) => {
       installmentStartDate,
     } = req.body;
 
-    const product = await Product.findByPk(productId, { transaction: t });
-
-    if (!product) {
+    if (!Array.isArray(items) || items.length === 0) {
       await t.rollback();
-      return res.status(404).json({ message: "Product not found" });
+      return res.status(400).json({ message: "At least one item is required" });
     }
 
-    if (Number(product.quantity) < Number(quantity)) {
-      await t.rollback();
-      return res.status(400).json({ message: "Not enough stock available" });
-    }
+    const requestedProductIds = items.map((i) => Number(i.productId));
 
-    const batches = await ProductBatch.findAll({
-      where: { productId, remainingQuantity: { [Op.gt]: 0 } },
-      order: [["purchaseDate", "ASC"], ["id", "ASC"]],
-      transaction: t,
-    });
-
-    const batch = batches.find((b) => Number(b.remainingQuantity) >= Number(quantity));
-
-    if (batches.length && !batch) {
+    if (new Set(requestedProductIds).size !== requestedProductIds.length) {
       await t.rollback();
       return res.status(400).json({
         message:
-          "Stock for this item is split across purchase batches at different prices, and no single batch has enough remaining quantity to cover this sale. Please sell a smaller quantity.",
+          "The same product cannot appear twice in one sale — increase its quantity on that line instead",
       });
     }
 
-    let finalAmount = 0;
-    let totalPaid = 0;
-    let remainingAmount = 0;
-    let monthlyInstallment = 0;
-    let expectedClearDate = null;
-    let finalCashPrice = 0;
-    let finalInstallmentPrice = 0;
-
-    // Fall back to the product's own purchasePrice for legacy stock that predates batch tracking.
-    const totalPurchase = batch
-      ? Number(batch.purchasePrice || 0) * Number(quantity)
-      : Number(product.purchasePrice || 0) * Number(quantity);
-
-    if (saleType === "cash") {
-      finalCashPrice = Number(salePrice || product.salePrice || 0) * Number(quantity);
-      finalAmount = finalCashPrice - Number(discount || 0);
-      totalPaid = Number(paidAmount || finalAmount);
-      remainingAmount = finalAmount - totalPaid;
-    }
-
+    // Installment-plan validation is sale-level (unchanged) and decides
+    // appliedMarkupPercent, needed before per-item pricing below.
     let appliedMarkupPercent = 0;
     let resolvedFrequency = "monthly";
 
@@ -142,16 +108,134 @@ exports.createSale = async (req, res) => {
 
         appliedMarkupPercent = Number(markupPercent);
       }
+    }
 
-      finalCashPrice =
-        Number(cashPrice || product.salePrice || product.salePrice || 0) *
-        Number(quantity);
+    // Per-item pass: validate stock, pick a batch (same "one batch must
+    // cover this line's full quantity" rule as before, just per line), and
+    // decrement stock immediately within this transaction so a later line
+    // for a different product sees consistent state. Duplicate products in
+    // one cart are already rejected above, so this ordering never has to
+    // deal with two lines contending for the same product's stock.
+    const lineResults = [];
 
-      finalInstallmentPrice =
-        finalCashPrice + (finalCashPrice * appliedMarkupPercent) / 100;
+    for (const rawItem of items) {
+      const itemProductId = Number(rawItem.productId);
+      const itemQuantity = Number(rawItem.quantity || 1);
 
-      finalAmount = finalInstallmentPrice - Number(discount || 0);
+      if (!itemProductId || itemQuantity < 1) {
+        await t.rollback();
+        return res.status(400).json({ message: "Each item needs a valid product and quantity" });
+      }
 
+      const product = await Product.findByPk(itemProductId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!product) {
+        await t.rollback();
+        return res.status(404).json({ message: `Product #${itemProductId} not found` });
+      }
+
+      if (Number(product.quantity) < itemQuantity) {
+        await t.rollback();
+        return res.status(400).json({
+          message: `Not enough stock available for ${product.productName}`,
+        });
+      }
+
+      const batches = await ProductBatch.findAll({
+        where: { productId: itemProductId, remainingQuantity: { [Op.gt]: 0 } },
+        order: [["purchaseDate", "ASC"], ["id", "ASC"]],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      const batch = batches.find((b) => Number(b.remainingQuantity) >= itemQuantity);
+
+      if (batches.length && !batch) {
+        await t.rollback();
+        return res.status(400).json({
+          message: `Stock for ${product.productName} is split across purchase batches at different prices, and no single batch has enough remaining quantity to cover this line. Please sell a smaller quantity.`,
+        });
+      }
+
+      // Fall back to the product's own purchasePrice for legacy stock that predates batch tracking.
+      const linePurchasePrice = batch
+        ? Number(batch.purchasePrice || 0) * itemQuantity
+        : Number(product.purchasePrice || 0) * itemQuantity;
+
+      let lineCashPrice = 0;
+      let lineInstallmentPrice = 0;
+      let lineRawPrice = 0;
+
+      if (saleType === "cash") {
+        lineCashPrice = Number(rawItem.salePrice || product.salePrice || 0) * itemQuantity;
+        lineRawPrice = lineCashPrice;
+      } else {
+        lineCashPrice = Number(rawItem.cashPrice || product.salePrice || 0) * itemQuantity;
+        lineInstallmentPrice = lineCashPrice + (lineCashPrice * appliedMarkupPercent) / 100;
+        lineRawPrice = lineInstallmentPrice;
+      }
+
+      product.quantity = Number(product.quantity) - itemQuantity;
+
+      if (product.quantity <= 0) {
+        product.quantity = 0;
+        product.status = "sold";
+      }
+
+      await product.save({ transaction: t });
+
+      if (batch) {
+        batch.remainingQuantity = Number(batch.remainingQuantity) - itemQuantity;
+        await batch.save({ transaction: t });
+      }
+
+      lineResults.push({
+        productId: itemProductId,
+        productBatchId: batch ? batch.id : null,
+        quantity: itemQuantity,
+        purchasePrice: linePurchasePrice,
+        cashPrice: lineCashPrice,
+        installmentPrice: lineInstallmentPrice,
+        rawPrice: lineRawPrice,
+      });
+    }
+
+    const totalPurchase = lineResults.reduce((s, l) => s + l.purchasePrice, 0);
+    const rawSaleTotal = lineResults.reduce((s, l) => s + l.rawPrice, 0);
+    const discountAmount = Number(discount || 0);
+
+    // Prorate the sale-level discount across lines by raw-price share, with
+    // the remainder assigned to the last line so shares always sum exactly
+    // to the sale-level discount (avoids float drift).
+    let allocatedDiscount = 0;
+    lineResults.forEach((line, index) => {
+      const isLast = index === lineResults.length - 1;
+      const share = isLast
+        ? Math.round((discountAmount - allocatedDiscount) * 100) / 100
+        : rawSaleTotal > 0
+        ? Math.round(((discountAmount * line.rawPrice) / rawSaleTotal) * 100) / 100
+        : 0;
+
+      allocatedDiscount += share;
+      line.discountShare = share;
+      line.finalAmount = line.rawPrice - share;
+      line.profit = line.finalAmount - line.purchasePrice;
+    });
+
+    const finalAmount = rawSaleTotal - discountAmount;
+
+    let totalPaid = 0;
+    let remainingAmount = 0;
+    let monthlyInstallment = 0;
+    let expectedClearDate = null;
+
+    if (saleType === "cash") {
+      totalPaid = Number(paidAmount || finalAmount);
+      remainingAmount = finalAmount - totalPaid;
+    } else {
       const autoAdvance = finalAmount / Number(installmentMonths);
 
       totalPaid =
@@ -180,7 +264,7 @@ exports.createSale = async (req, res) => {
 
       expectedClearDate = getInstallmentDueDate(
         startDate,
-        frequency,
+        resolvedFrequency,
         Number(installmentMonths) - 1,
         10
       );
@@ -202,11 +286,7 @@ exports.createSale = async (req, res) => {
     const duplicateWindowMs = 30 * 1000; // prevent accidental double submissions
     const duplicateSearch = {
       saleType,
-      productId,
-      quantity,
-      discount,
-      salePrice: saleType === "cash" ? finalCashPrice : finalInstallmentPrice,
-      cashPrice: finalCashPrice,
+      discount: discountAmount,
       finalAmount,
       paidAmount: totalPaid,
       remainingAmount,
@@ -225,9 +305,23 @@ exports.createSale = async (req, res) => {
       duplicateSearch.customerId = null;
     }
 
-    const existingDuplicate = await Sale.findOne({
+    const candidateDuplicates = await Sale.findAll({
       where: duplicateSearch,
+      include: [{ model: SaleItem, as: "items" }],
       transaction: t,
+    });
+
+    const incomingSignature = lineResults
+      .map((l) => `${l.productId}:${l.quantity}`)
+      .sort()
+      .join("|");
+
+    const existingDuplicate = candidateDuplicates.find((candidate) => {
+      const candidateSignature = (candidate.items || [])
+        .map((i) => `${i.productId}:${i.quantity}`)
+        .sort()
+        .join("|");
+      return candidateSignature === incomingSignature;
     });
 
     if (existingDuplicate) {
@@ -238,23 +332,32 @@ exports.createSale = async (req, res) => {
       });
     }
 
+    const firstLine = lineResults[0];
+    const totalQuantity = lineResults.reduce((s, l) => s + l.quantity, 0);
+
     const sale = await Sale.create(
       {
         invoiceNo: generateInvoiceNo(),
         saleType,
 
         customerId: saleType === "installment" ? customerId : null,
-        productId,
-        productBatchId: batch ? batch.id : null,
-        quantity,
+
+        // Legacy single-product columns are kept NOT NULL-satisfied with a
+        // best-effort representative value (first line's product, summed
+        // quantity/pricing) purely so the existing schema constraints hold —
+        // every read path goes through sale.items now, nothing reads these
+        // for their own sake anymore.
+        productId: firstLine.productId,
+        productBatchId: firstLine.productBatchId,
+        quantity: totalQuantity,
 
         purchasePrice: totalPurchase,
 
-        cashPrice: finalCashPrice,
-        installmentPrice: finalInstallmentPrice,
+        cashPrice: lineResults.reduce((s, l) => s + l.cashPrice, 0),
+        installmentPrice: lineResults.reduce((s, l) => s + l.installmentPrice, 0),
 
-        salePrice: saleType === "cash" ? finalCashPrice : finalInstallmentPrice,
-        discount,
+        salePrice: rawSaleTotal,
+        discount: discountAmount,
 
         finalAmount,
 
@@ -295,18 +398,23 @@ exports.createSale = async (req, res) => {
       { transaction: t }
     );
 
-    product.quantity = Number(product.quantity) - Number(quantity);
-
-    if (product.quantity <= 0) {
-      product.quantity = 0;
-      product.status = "sold";
-    }
-
-    await product.save({ transaction: t });
-
-    if (batch) {
-      batch.remainingQuantity = Number(batch.remainingQuantity) - Number(quantity);
-      await batch.save({ transaction: t });
+    for (const line of lineResults) {
+      await SaleItem.create(
+        {
+          saleId: sale.id,
+          productId: line.productId,
+          productBatchId: line.productBatchId,
+          quantity: line.quantity,
+          purchasePrice: line.purchasePrice,
+          cashPrice: line.cashPrice,
+          installmentPrice: line.installmentPrice,
+          salePrice: line.rawPrice,
+          discountShare: line.discountShare,
+          finalAmount: line.finalAmount,
+          profit: line.profit,
+        },
+        { transaction: t }
+      );
     }
 
     if (saleType === "installment") {
@@ -404,7 +512,14 @@ exports.getSales = async (req, res) => {
     const sales = await Sale.findAll({
       include: [
         { model: Customer, as: "customer" },
-        { model: Product, as: "product" },
+        {
+          model: SaleItem,
+          as: "items",
+          include: [
+            { model: Product, as: "product" },
+            { model: ProductBatch, as: "productBatch" },
+          ],
+        },
         {
           model: User,
           as: "salesman",
@@ -428,7 +543,14 @@ exports.getSaleById = async (req, res) => {
     const sale = await Sale.findByPk(req.params.id, {
       include: [
         { model: Customer, as: "customer" },
-        { model: Product, as: "product" },
+        {
+          model: SaleItem,
+          as: "items",
+          include: [
+            { model: Product, as: "product" },
+            { model: ProductBatch, as: "productBatch" },
+          ],
+        },
         {
           model: User,
           as: "salesman",

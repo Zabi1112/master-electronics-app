@@ -7,6 +7,7 @@ const Customer = require("./Customer")(sequelize);
 const Product = require("./Product")(sequelize);
 const ProductBatch = require("./ProductBatch")(sequelize);
 const Sale = require("./Sale")(sequelize);
+const SaleItem = require("./SaleItem")(sequelize);
 const SaleReturn = require("./SaleReturn")(sequelize);
 const Installment = require("./Installment")(sequelize);
 const Partner = require("./Partner")(sequelize);
@@ -25,6 +26,12 @@ Sale.belongsTo(Customer, { foreignKey: "customerId", as: "customer" });
 Sale.belongsTo(Product, { foreignKey: "productId", as: "product" });
 Sale.belongsTo(ProductBatch, { foreignKey: "productBatchId", as: "productBatch" });
 Sale.belongsTo(User, { foreignKey: "soldBy", as: "salesman" });
+Sale.hasMany(SaleItem, { foreignKey: "saleId", as: "items" });
+
+// Sale item relations
+SaleItem.belongsTo(Sale, { foreignKey: "saleId", as: "sale" });
+SaleItem.belongsTo(Product, { foreignKey: "productId", as: "product" });
+SaleItem.belongsTo(ProductBatch, { foreignKey: "productBatchId", as: "productBatch" });
 
 // Product batch relations
 Product.hasMany(ProductBatch, { foreignKey: "productId", as: "batches" });
@@ -127,6 +134,7 @@ module.exports = {
   Product,
   ProductBatch,
   Sale,
+  SaleItem,
   SaleReturn,
   Installment,
   Partner,

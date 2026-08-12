@@ -64,12 +64,25 @@ const InvoicePrint = ({ sale }) => {
             </tr>
           </thead>
           <tbody>
-            <tr className="bg-white/5 text-gray-200">
-              <td className="px-4 py-4 border border-[#2b2b34]">{sale.product?.productName || `Product #${sale.productId}`}</td>
-              <td className="px-4 py-4 border border-[#2b2b34] text-center">{sale.quantity}</td>
-              <td className="px-4 py-4 border border-[#2b2b34] text-right">Rs. {money(sale.salePrice)}</td>
-              <td className="px-4 py-4 border border-[#2b2b34] text-right">Rs. {money(sale.finalAmount)}</td>
-            </tr>
+            {(sale.items?.length
+              ? sale.items
+              : [
+                  {
+                    product: sale.product,
+                    productId: sale.productId,
+                    quantity: sale.quantity,
+                    salePrice: sale.salePrice,
+                    finalAmount: sale.finalAmount,
+                  },
+                ]
+            ).map((item, index) => (
+              <tr key={item.id || index} className="bg-white/5 text-gray-200">
+                <td className="px-4 py-4 border border-[#2b2b34]">{item.product?.productName || `Product #${item.productId}`}</td>
+                <td className="px-4 py-4 border border-[#2b2b34] text-center">{item.quantity}</td>
+                <td className="px-4 py-4 border border-[#2b2b34] text-right">Rs. {money(item.salePrice)}</td>
+                <td className="px-4 py-4 border border-[#2b2b34] text-right">Rs. {money(item.finalAmount)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

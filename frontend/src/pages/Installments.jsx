@@ -17,6 +17,15 @@ import DueThisMonthPrint from "../components/DueThisMonthPrint.jsx";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
+// A sale's items (potentially multiple) collapsed into one display label,
+// e.g. "iPhone 13" or "iPhone 13 +2 more".
+const productLabel = (sale) => {
+  const items = sale?.items || [];
+  if (items.length === 0) return sale?.productId ? `Product #${sale.productId}` : "-";
+  const first = items[0]?.product?.productName || "Product";
+  return items.length > 1 ? `${first} +${items.length - 1} more` : first;
+};
+
 const monthLabel = (key) => {
   const [year, month] = key.split("-");
   const date = new Date(Number(year), Number(month) - 1, 1);
@@ -217,7 +226,9 @@ const Installments = () => {
     const matchingCustomerIds = new Set(
       allItems
         .filter((sale) =>
-          (sale.product?.productName || "").toLowerCase().includes(text)
+          (sale.items || []).some((item) =>
+            (item.product?.productName || "").toLowerCase().includes(text)
+          )
         )
         .map((sale) => sale.customerId)
     );
@@ -575,7 +586,7 @@ const Installments = () => {
                 <div className="flex justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-bold text-yellow-400">
-                      {sale.product?.productName || `Product #${sale.productId}`}
+                      {productLabel(sale)}
                     </h3>
                     <p className="text-gray-400 text-sm">
                       Invoice: {sale.invoiceNo}
@@ -626,8 +637,7 @@ const Installments = () => {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-yellow-400">
-                  {selectedSale.product?.productName ||
-                    `Product #${selectedSale.productId}`}
+                  {productLabel(selectedSale)}
                 </h2>
                 <p className="text-gray-400 text-sm">
                   Invoice: {selectedSale.invoiceNo} | Status:{" "}

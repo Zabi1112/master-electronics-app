@@ -7,6 +7,7 @@ const {
     Product,
     ProductBatch,
     Sale,
+    SaleItem,
     User,
 } = require("../models");
 
@@ -63,18 +64,31 @@ const calculateInvestorReturn = async (investor) => {
     }
 
     if (investor.investorType === "profit_share") {
+        // A sale can now bundle multiple items; this finds sales where at
+        // least one line item's batch was funded by this investor. Kept at
+        // whole-sale profit attribution (not split per item within a
+        // bundle) since payments aren't itemized — same simplification the
+        // pre-multi-item code effectively had already.
         const sales = await Sale.findAll({
             include: [
                 {
-                    model: ProductBatch,
-                    as: "productBatch",
-                    where: { investorId: investor.id, fundingSource: "investor" },
-                    attributes: ["id", "purchasePrice", "purchaseDate"],
+                    model: SaleItem,
+                    as: "items",
+                    required: true,
                     include: [
                         {
-                            model: Product,
-                            as: "product",
-                            attributes: ["id", "productName", "purchasePrice", "salePrice", "status"],
+                            model: ProductBatch,
+                            as: "productBatch",
+                            where: { investorId: investor.id, fundingSource: "investor" },
+                            required: true,
+                            attributes: ["id", "purchasePrice", "purchaseDate"],
+                            include: [
+                                {
+                                    model: Product,
+                                    as: "product",
+                                    attributes: ["id", "productName", "purchasePrice", "salePrice", "status"],
+                                },
+                            ],
                         },
                     ],
                 },

@@ -8,10 +8,7 @@ const money = (v) => Number(v || 0).toLocaleString();
 const emptyForm = {
   saleType: "cash",
   customerId: "",
-  productId: "",
-  quantity: 1,
-  salePrice: "",
-  cashPrice: "",
+  items: [], // { productId, quantity, salePrice, cashPrice }
   discount: 0,
   paidAmount: "",
   advanceAmount: "",
@@ -21,11 +18,22 @@ const emptyForm = {
   installmentStartDate: "",
 };
 
+const emptyItemPicker = { productId: "", quantity: 1 };
+
 const getMarkup = (months) => {
   if (Number(months) === 3) return 20;
   if (Number(months) === 6) return 30;
   if (Number(months) === 12) return 40;
   return 0;
+};
+
+// A sale's items (potentially multiple) collapsed into one display label,
+// e.g. "iPhone 13" or "iPhone 13 +2 more".
+const productLabel = (sale) => {
+  const items = sale.items || [];
+  if (items.length === 0) return sale.productId ? `Product #${sale.productId}` : "-";
+  const first = items[0]?.product?.productName || "Product";
+  return items.length > 1 ? `${first} +${items.length - 1} more` : first;
 };
 
 const Sales = () => {
@@ -36,6 +44,7 @@ const Sales = () => {
   const [searchText, setSearchText] = useState("");
   const [saleTypeFilter, setSaleTypeFilter] = useState("");
   const [form, setForm] = useState(emptyForm);
+  const [itemPicker, setItemPicker] = useState(emptyItemPicker);
   const [formOpen, setFormOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [paymentModal, setPaymentModal] = useState(null);
@@ -86,24 +95,26 @@ const Sales = () => {
       const haystack =
         searchMode === "name"
           ? sale.customer?.name || ""
-          : sale.product?.productName || "";
+          : (sale.items || []).map((i) => i.product?.productName || "").join(" ");
 
       return haystack.toLowerCase().includes(text);
     });
   }, [sales, searchMode, searchText, saleTypeFilter]);
 
-  const selectedProduct = useMemo(() => {
-    return products.find((p) => String(p.id) === String(form.productId));
-  }, [products, form.productId]);
-
   const calculations = useMemo(() => {
-    const qty = Number(form.quantity || 1);
     const discount = Number(form.discount || 0);
 
-    if (form.saleType === "cash") {
-      const cashTotal =
-        Number(form.salePrice || selectedProduct?.salePrice || 0) * qty;
+    const cashTotal = form.items.reduce((sum, item) => {
+      const product = products.find((p) => String(p.id) === String(item.productId));
+      const unit = Number(
+        (form.saleType === "cash" ? item.salePrice : item.cashPrice) ||
+          product?.salePrice ||
+          0
+      );
+      return sum + unit * Number(item.quantity || 1);
+    }, 0);
 
+    if (form.saleType === "cash") {
       const finalAmount = cashTotal - discount;
 
       const paid =
@@ -121,9 +132,6 @@ const Sales = () => {
         monthly: 0,
       };
     }
-
-    const cashTotal =
-      Number(form.cashPrice || selectedProduct?.salePrice || 0) * qty;
 
     const markupPercent =
       form.installmentFrequency === "monthly"
@@ -154,11 +162,11 @@ const Sales = () => {
       remainingInstallments,
       monthly,
     };
-  }, [form, selectedProduct]);
+  }, [form, products]);
 
   useEffect(() => {
     if (form.saleType !== "installment") return;
-    if (!form.productId) return;
+    if (form.items.length === 0) return;
 
     if (form.advanceAmount === "") {
       setForm((old) => ({
@@ -170,30 +178,78 @@ const Sales = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    form.productId,
+    form.items,
     form.installmentMonths,
     form.installmentFrequency,
     form.markupPercent,
-    form.quantity,
-    form.cashPrice,
   ]);
+
+  const addItemToCart = () => {
+    if (!itemPicker.productId) return;
+
+    const product = products.find(
+      (p) => String(p.id) === String(itemPicker.productId)
+    );
+    if (!product) return;
+
+    const qty = Number(itemPicker.quantity || 1);
+
+    setForm((old) => {
+      const existingIndex = old.items.findIndex(
+        (item) => String(item.productId) === String(itemPicker.productId)
+      );
+
+      let items;
+      if (existingIndex >= 0) {
+        items = [...old.items];
+        items[existingIndex] = {
+          ...items[existingIndex],
+          quantity: Number(items[existingIndex].quantity || 0) + qty,
+        };
+      } else {
+        items = [
+          ...old.items,
+          {
+            productId: itemPicker.productId,
+            quantity: qty,
+            salePrice: product.salePrice || "",
+            cashPrice: product.salePrice || "",
+          },
+        ];
+      }
+
+      return {
+        ...old,
+        items,
+        advanceAmount: old.saleType === "installment" ? "" : old.advanceAmount,
+      };
+    });
+
+    setItemPicker(emptyItemPicker);
+  };
+
+  const removeItem = (index) => {
+    setForm((old) => ({
+      ...old,
+      items: old.items.filter((_, i) => i !== index),
+      advanceAmount: old.saleType === "installment" ? "" : old.advanceAmount,
+    }));
+  };
+
+  const updateItemField = (index, field, value) => {
+    setForm((old) => {
+      const items = [...old.items];
+      items[index] = { ...items[index], [field]: value };
+      return {
+        ...old,
+        items,
+        advanceAmount: old.saleType === "installment" ? "" : old.advanceAmount,
+      };
+    });
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-
-    if (name === "productId") {
-      const product = products.find((p) => String(p.id) === String(value));
-
-      setForm((old) => ({
-        ...old,
-        productId: value,
-        salePrice: product?.salePrice || "",
-        cashPrice: product?.salePrice || "",
-        advanceAmount: old.saleType === "installment" ? "" : old.advanceAmount,
-      }));
-
-      return;
-    }
 
     if (name === "installmentMonths") {
       setForm((old) => ({
@@ -215,7 +271,7 @@ const Sales = () => {
       return;
     }
 
-    if (["quantity", "cashPrice", "discount", "markupPercent"].includes(name)) {
+    if (["discount", "markupPercent"].includes(name)) {
       setForm((old) => ({
         ...old,
         [name]: value,
@@ -231,6 +287,11 @@ const Sales = () => {
     e.preventDefault();
     setError("");
 
+    if (form.items.length === 0) {
+      setError("Add at least one item to the sale");
+      return;
+    }
+
     if (calculations.finalAmount <= 0) {
       setError("Final amount must be greater than zero");
       return;
@@ -242,15 +303,19 @@ const Sales = () => {
     }
 
     try {
+      const itemsPayload = form.items.map((item) => ({
+        productId: Number(item.productId),
+        quantity: Number(item.quantity || 1),
+        ...(form.saleType === "cash"
+          ? { salePrice: Number(item.salePrice || 0) }
+          : { cashPrice: Number(item.cashPrice || 0) }),
+      }));
+
       const payload =
         form.saleType === "cash"
           ? {
               saleType: "cash",
-              productId: Number(form.productId),
-              quantity: Number(form.quantity || 1),
-              salePrice: Number(
-                form.salePrice || selectedProduct?.salePrice || 0
-              ),
+              items: itemsPayload,
               discount: Number(form.discount || 0),
               paidAmount:
                 form.paidAmount === ""
@@ -260,11 +325,7 @@ const Sales = () => {
           : {
               saleType: "installment",
               customerId: Number(form.customerId),
-              productId: Number(form.productId),
-              quantity: Number(form.quantity || 1),
-              cashPrice: Number(
-                form.cashPrice || selectedProduct?.salePrice || 0
-              ),
+              items: itemsPayload,
               discount: Number(form.discount || 0),
               advanceAmount: Number(calculations.advance || 0),
               installmentFrequency: form.installmentFrequency || "monthly",
@@ -281,6 +342,7 @@ const Sales = () => {
       await api.post("/sales", payload);
 
       setForm(emptyForm);
+      setItemPicker(emptyItemPicker);
       setFormOpen(false);
       loadData();
     } catch (err) {
@@ -386,68 +448,19 @@ const Sales = () => {
               </select>
             )}
 
-            <select
-              name="productId"
-              className="px-4 py-3 rounded-xl bg-white"
-              value={form.productId}
-              onChange={handleChange}
-              required
-            >
-              <option value="">Select Product</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.productName} - Qty {p.quantity} - Rs. {money(p.salePrice)}
-                </option>
-              ))}
-            </select>
-
-            <input
-              name="quantity"
-              type="number"
-              min="1"
-              max={selectedProduct?.quantity || ""}
-              className="px-4 py-3 rounded-xl bg-white"
-              placeholder="Quantity"
-              value={form.quantity}
-              onChange={handleChange}
-              required
-            />
-
             {form.saleType === "cash" && (
-              <>
-                <input
-                  name="salePrice"
-                  type="number"
-                  className="px-4 py-3 rounded-xl bg-white"
-                  placeholder="Sale Price"
-                  value={form.salePrice}
-                  onChange={handleChange}
-                  required
-                />
-
-                <input
-                  name="paidAmount"
-                  type="number"
-                  className="px-4 py-3 rounded-xl bg-white"
-                  placeholder="Paid Amount"
-                  value={form.paidAmount}
-                  onChange={handleChange}
-                />
-              </>
+              <input
+                name="paidAmount"
+                type="number"
+                className="px-4 py-3 rounded-xl bg-white"
+                placeholder="Paid Amount"
+                value={form.paidAmount}
+                onChange={handleChange}
+              />
             )}
 
             {form.saleType === "installment" && (
               <>
-                <input
-                  name="cashPrice"
-                  type="number"
-                  className="px-4 py-3 rounded-xl bg-white"
-                  placeholder="Cash Price"
-                  value={form.cashPrice}
-                  onChange={handleChange}
-                  required
-                />
-
                 <select
                   name="installmentFrequency"
                   className="px-4 py-3 rounded-xl bg-white"
@@ -525,6 +538,116 @@ const Sales = () => {
               value={form.discount}
               onChange={handleChange}
             />
+          </div>
+
+          <div className="mt-5">
+            <h3 className="text-yellow-400 font-bold mb-3">Items</h3>
+
+            <div className="flex flex-col md:flex-row gap-3 mb-4">
+              <select
+                className="px-4 py-3 rounded-xl bg-white flex-1"
+                value={itemPicker.productId}
+                onChange={(e) =>
+                  setItemPicker({ ...itemPicker, productId: e.target.value })
+                }
+              >
+                <option value="">Select Product to Add</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.productName} - Qty {p.quantity} - Rs. {money(p.salePrice)}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="number"
+                min="1"
+                className="px-4 py-3 rounded-xl bg-white w-full md:w-32"
+                placeholder="Qty"
+                value={itemPicker.quantity}
+                onChange={(e) =>
+                  setItemPicker({ ...itemPicker, quantity: e.target.value })
+                }
+              />
+
+              <button
+                type="button"
+                onClick={addItemToCart}
+                disabled={!itemPicker.productId}
+                className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-5 py-3 rounded-xl disabled:opacity-50"
+              >
+                + Add Item
+              </button>
+            </div>
+
+            {form.items.length === 0 ? (
+              <p className="text-gray-400 text-sm">
+                No items added yet — add at least one to create the sale.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {form.items.map((item, index) => {
+                  const product = products.find(
+                    (p) => String(p.id) === String(item.productId)
+                  );
+
+                  return (
+                    <div
+                      key={item.productId}
+                      className="bg-black/60 border border-yellow-600/20 rounded-xl p-3 grid grid-cols-2 md:grid-cols-5 gap-3 items-center"
+                    >
+                      <div className="col-span-2">
+                        <p className="text-white font-semibold">
+                          {product?.productName || `Product #${item.productId}`}
+                        </p>
+                        <p className="text-gray-500 text-xs">
+                          Stock: {product?.quantity ?? "-"}
+                        </p>
+                      </div>
+
+                      <input
+                        type="number"
+                        min="1"
+                        className="px-3 py-2 rounded-lg bg-white"
+                        placeholder="Qty"
+                        value={item.quantity}
+                        onChange={(e) =>
+                          updateItemField(index, "quantity", e.target.value)
+                        }
+                      />
+
+                      <input
+                        type="number"
+                        className="px-3 py-2 rounded-lg bg-white"
+                        placeholder={
+                          form.saleType === "cash" ? "Sale Price" : "Cash Price"
+                        }
+                        value={
+                          form.saleType === "cash"
+                            ? item.salePrice
+                            : item.cashPrice
+                        }
+                        onChange={(e) =>
+                          updateItemField(
+                            index,
+                            form.saleType === "cash" ? "salePrice" : "cashPrice",
+                            e.target.value
+                          )
+                        }
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => removeItem(index)}
+                        className="bg-red-600/80 hover:bg-red-500 text-white font-bold px-3 py-2 rounded-lg"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {form.saleType === "installment" && (
@@ -682,9 +805,7 @@ const Sales = () => {
                     <td className="p-3">{sale.invoiceNo}</td>
                     <td className="p-3 capitalize">{sale.saleType}</td>
                     <td className="p-3">{sale.customer?.name || "-"}</td>
-                    <td className="p-3">
-                      {sale.product?.productName || sale.productId}
-                    </td>
+                    <td className="p-3">{productLabel(sale)}</td>
                     <td className="p-3">Rs. {money(sale.finalAmount)}</td>
                     <td className="p-3">Rs. {money(sale.paidAmount)}</td>
                     <td className="p-3">Rs. {money(sale.remainingAmount)}</td>
@@ -723,9 +844,7 @@ const Sales = () => {
                     <h3 className="font-bold text-yellow-400">
                       {sale.invoiceNo}
                     </h3>
-                    <p className="text-sm text-gray-400">
-                      {sale.product?.productName || `Product #${sale.productId}`}
-                    </p>
+                    <p className="text-sm text-gray-400">{productLabel(sale)}</p>
                   </div>
 
                   <span className="h-fit px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 text-xs capitalize">
@@ -820,8 +939,7 @@ const Sales = () => {
               Record Payment
             </h2>
             <p className="text-sm text-gray-400 mb-4">
-              Invoice {paymentModal.invoiceNo} —{" "}
-              {paymentModal.product?.productName || `Product #${paymentModal.productId}`}
+              Invoice {paymentModal.invoiceNo} — {productLabel(paymentModal)}
             </p>
 
             <div className="grid grid-cols-2 gap-3 text-sm mb-4">

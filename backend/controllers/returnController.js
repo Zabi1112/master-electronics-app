@@ -1,6 +1,6 @@
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
-const { Sale, Product, ProductBatch, SaleReturn, Customer, User } = require("../models");
+const { Sale, SaleItem, Product, ProductBatch, SaleReturn, Customer, User } = require("../models");
 const logActivity = require("../utils/activityLogger");
 
 const getToday = () => new Date().toISOString().split("T")[0];
@@ -36,13 +36,20 @@ exports.createReturn = async (req, res) => {
       });
     }
 
-    const sale = await Sale.findByPk(saleId, { transaction: t });
+    const sale = await Sale.findByPk(saleId, {
+      include: [{ model: SaleItem, as: "items" }],
+      transaction: t,
+    });
     if (!sale) {
       await t.rollback();
       return res.status(404).json({ message: "Sale not found" });
     }
 
-    if (Number(productId) !== Number(sale.productId)) {
+    const saleItem = (sale.items || []).find(
+      (i) => Number(i.productId) === Number(productId)
+    );
+
+    if (!saleItem) {
       await t.rollback();
       return res.status(400).json({
         message: "Returned product must belong to the original sale",
@@ -50,10 +57,10 @@ exports.createReturn = async (req, res) => {
     }
 
     const returnQty = Number(quantity);
-    if (returnQty < 1 || returnQty > Number(sale.quantity)) {
+    if (returnQty < 1 || returnQty > Number(saleItem.quantity)) {
       await t.rollback();
       return res.status(400).json({
-        message: "Quantity must be at least 1 and cannot exceed the original sale quantity",
+        message: "Quantity must be at least 1 and cannot exceed this item's quantity on the sale",
       });
     }
 
@@ -135,8 +142,8 @@ exports.createReturn = async (req, res) => {
     product.status = "in_stock";
     await product.save({ transaction: t });
 
-    if (sale.productBatchId) {
-      const batch = await ProductBatch.findByPk(sale.productBatchId, { transaction: t });
+    if (saleItem.productBatchId) {
+      const batch = await ProductBatch.findByPk(saleItem.productBatchId, { transaction: t });
       if (batch) {
         batch.remainingQuantity = Number(batch.remainingQuantity) + returnQty;
         await batch.save({ transaction: t });
@@ -153,7 +160,29 @@ exports.createReturn = async (req, res) => {
       await replacementProduct.save({ transaction: t });
     }
 
-    if (Number(returnQty) === Number(sale.quantity)) {
+    // Cancel the whole sale only once EVERY item on it has been fully
+    // returned/exchanged — generalizes the old single-item sale's
+    // "this return covers the whole sale quantity" trigger, since a
+    // multi-item sale shouldn't be cancelled just because one of several
+    // items was returned while the customer keeps the rest. Includes the
+    // return just created above (already committed within this transaction).
+    const allReturnsForSale = await SaleReturn.findAll({
+      where: { saleId: sale.id },
+      attributes: ["productId", "quantity"],
+      transaction: t,
+      raw: true,
+    });
+
+    const returnedTotals = {};
+    allReturnsForSale.forEach((r) => {
+      returnedTotals[r.productId] = (returnedTotals[r.productId] || 0) + Number(r.quantity);
+    });
+
+    const allItemsFullyReturned = sale.items.every(
+      (item) => (returnedTotals[item.productId] || 0) >= Number(item.quantity)
+    );
+
+    if (allItemsFullyReturned) {
       sale.status = "cancelled";
       await sale.save({ transaction: t });
     }
@@ -191,7 +220,11 @@ exports.getReturns = async (req, res) => {
           as: "sale",
           include: [
             { model: Customer, as: "customer" },
-            { model: Product, as: "product" },
+            {
+              model: SaleItem,
+              as: "items",
+              include: [{ model: Product, as: "product" }],
+            },
           ],
         },
         { model: Product, as: "returnedProduct" },
@@ -228,7 +261,11 @@ exports.getReturnById = async (req, res) => {
           as: "sale",
           include: [
             { model: Customer, as: "customer" },
-            { model: Product, as: "product" },
+            {
+              model: SaleItem,
+              as: "items",
+              include: [{ model: Product, as: "product" }],
+            },
           ],
         },
         { model: Product, as: "returnedProduct" },

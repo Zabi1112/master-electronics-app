@@ -102,6 +102,12 @@ const initializeApp = async () => {
   if (migrated) {
     console.log(`Backfilled product batches for ${migrated} product(s)`);
   }
+
+  const { backfillSaleItems } = require("./scripts/backfillSaleItems");
+  const { migrated: itemsMigrated } = await backfillSaleItems();
+  if (itemsMigrated) {
+    console.log(`Backfilled sale items for ${itemsMigrated} sale(s)`);
+  }
 };
 
 // Cold starts (a fresh serverless instance) need connectDB() + sync() +

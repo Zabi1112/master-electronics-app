@@ -68,7 +68,9 @@ const InstallmentReceiptPrint = ({
       <div className="rounded-3xl border border-yellow-500/10 bg-white/5 p-5 mb-5 text-sm text-gray-300">
         <h2 className="font-bold text-white mb-3">Item / Sale Details</h2>
         <div className="grid gap-3 lg:grid-cols-2">
-          <p><span className="text-gray-400">Product:</span> {sale?.product?.productName || "-"}</p>
+          <p><span className="text-gray-400">Product:</span> {(sale?.items?.length
+            ? sale.items.map((i) => i.product?.productName).filter(Boolean).join(", ")
+            : sale?.product?.productName) || "-"}</p>
           <p><span className="text-gray-400">Sale Type:</span> {sale?.saleType || "installment"}</p>
           <p><span className="text-gray-400">Total Item Price:</span> Rs. {money(sale?.finalAmount)}</p>
           <p><span className="text-gray-400">Total Paid Till Now:</span> Rs. {money(totalPaidTillNow || sale?.paidAmount)}</p>

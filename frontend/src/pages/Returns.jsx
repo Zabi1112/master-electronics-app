@@ -3,6 +3,13 @@ import api from "../api/api";
 
 const money = (v) => Number(v || 0).toLocaleString();
 
+const saleLabel = (sale) => {
+  const items = sale.items || [];
+  if (items.length === 0) return "Product";
+  const first = items[0]?.product?.productName || "Product";
+  return items.length > 1 ? `${first} +${items.length - 1} more` : first;
+};
+
 const emptyForm = {
   saleId: "",
   returnType: "return",
@@ -53,6 +60,14 @@ const Returns = () => {
     [sales, form.saleId]
   );
 
+  const selectedSaleItem = useMemo(
+    () =>
+      selectedSale?.items?.find(
+        (item) => String(item.productId) === String(form.productId)
+      ),
+    [selectedSale, form.productId]
+  );
+
   const availableReplacement = useMemo(
     () =>
       products.filter(
@@ -64,14 +79,29 @@ const Returns = () => {
   const handleSaleChange = (e) => {
     const saleId = e.target.value;
     const sale = sales.find((sale) => String(sale.id) === String(saleId));
+    const firstItem = sale?.items?.[0];
 
     setForm((old) => ({
       ...old,
       saleId,
-      productId: sale?.productId || "",
-      quantity: sale?.quantity || 1,
+      productId: firstItem?.productId || "",
+      quantity: firstItem?.quantity || 1,
       replacementProductId: "",
-      replacementQuantity: sale?.quantity || 1,
+      replacementQuantity: firstItem?.quantity || 1,
+    }));
+  };
+
+  const handleItemChange = (e) => {
+    const productId = e.target.value;
+    const item = selectedSale?.items?.find(
+      (i) => String(i.productId) === String(productId)
+    );
+
+    setForm((old) => ({
+      ...old,
+      productId,
+      quantity: item?.quantity || 1,
+      replacementQuantity: item?.quantity || 1,
     }));
   };
 
@@ -156,10 +186,26 @@ const Returns = () => {
             <option value="">Select Sale</option>
             {sales.map((sale) => (
               <option key={sale.id} value={sale.id}>
-                {sale.invoiceNo} - {sale.product?.productName || "Product"} - {sale.customer?.name || "Walk-in"}
+                {sale.invoiceNo} - {saleLabel(sale)} - {sale.customer?.name || "Walk-in"}
               </option>
             ))}
           </select>
+
+          {selectedSale && (
+            <select
+              className="px-4 py-3 rounded-xl bg-white"
+              value={form.productId}
+              onChange={handleItemChange}
+              required
+            >
+              <option value="">Select Item to Return</option>
+              {(selectedSale.items || []).map((item) => (
+                <option key={item.productId} value={item.productId}>
+                  {item.product?.productName || `Product #${item.productId}`} × {item.quantity}
+                </option>
+              ))}
+            </select>
+          )}
 
           <select
             name="returnType"
@@ -190,12 +236,12 @@ const Returns = () => {
                 <p className="text-white font-semibold">{selectedSale?.invoiceNo || "-"}</p>
               </div>
               <div className="bg-yellow-500/10 border border-yellow-600/30 rounded-2xl p-4">
-                <p className="text-sm text-gray-400">Original Product</p>
-                <p className="text-white font-semibold">{selectedSale?.product?.productName || "-"}</p>
+                <p className="text-sm text-gray-400">Selected Item</p>
+                <p className="text-white font-semibold">{selectedSaleItem?.product?.productName || "-"}</p>
               </div>
               <div className="bg-yellow-500/10 border border-yellow-600/30 rounded-2xl p-4">
-                <p className="text-sm text-gray-400">Sale Quantity</p>
-                <p className="text-white font-semibold">{selectedSale?.quantity || "-"}</p>
+                <p className="text-sm text-gray-400">Item Quantity</p>
+                <p className="text-white font-semibold">{selectedSaleItem?.quantity || "-"}</p>
               </div>
               <div className="bg-yellow-500/10 border border-yellow-600/30 rounded-2xl p-4">
                 <p className="text-sm text-gray-400">Customer</p>

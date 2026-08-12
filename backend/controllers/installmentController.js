@@ -5,6 +5,7 @@ const logActivity = require("../utils/activityLogger");
 
 const {
   Sale,
+  SaleItem,
   Installment,
   Customer,
   User,
@@ -15,6 +16,16 @@ const {
 const { recalculateShopBalance } = require("./shopAccountController");
 
 const todayDate = () => new Date().toISOString().split("T")[0];
+
+// A sale's items (potentially multiple) collapsed into one display label,
+// e.g. "iPhone 13" or "iPhone 13 +2 more".
+const itemsToProductLabel = (items) => {
+  if (!items || items.length === 0) return "-";
+
+  const first = items[0]?.product?.productName || "-";
+
+  return items.length > 1 ? `${first} +${items.length - 1} more` : first;
+};
 
 const calculateFine = (installment, paymentDate = new Date()) => {
   const dueDate = new Date(installment.dueDate);
@@ -572,8 +583,9 @@ exports.getCustomerInstallmentItems = async (req, res) => {
       },
       include: [
         {
-          model: Product,
-          as: "product",
+          model: SaleItem,
+          as: "items",
+          include: [{ model: Product, as: "product" }],
         },
         {
           model: Customer,
@@ -608,8 +620,9 @@ exports.getAllInstallmentSaleItems = async (req, res) => {
       },
       include: [
         {
-          model: Product,
-          as: "product",
+          model: SaleItem,
+          as: "items",
+          include: [{ model: Product, as: "product" }],
         },
         {
           model: Customer,
@@ -917,7 +930,13 @@ exports.getDueThisMonth = async (req, res) => {
     const saleInclude = {
       model: Sale,
       as: "sale",
-      include: [{ model: Product, as: "product" }],
+      include: [
+        {
+          model: SaleItem,
+          as: "items",
+          include: [{ model: Product, as: "product" }],
+        },
+      ],
     };
 
     if (planMonths) {
@@ -973,7 +992,7 @@ exports.getDueThisMonth = async (req, res) => {
           category,
           customerName: json.customer?.name || "-",
           customerPhone: json.customer?.phone || "-",
-          productName: json.sale?.product?.productName || "-",
+          productName: itemsToProductLabel(json.sale?.items),
           invoiceNo: json.sale?.invoiceNo || "-",
         };
       });
