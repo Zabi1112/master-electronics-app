@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowUpRight,
@@ -34,12 +34,15 @@ const cardAnim = {
   show: { opacity: 1, y: 0, scale: 1 },
 };
 
+const SALES_CHART_POINT_WIDTH = 70; // px per day, wide enough for the "Aug 13" tick labels
+
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState([]);
   const [overdue, setOverdue] = useState([]);
   const [loading, setLoading] = useState(false);
+  const salesChartScrollRef = useRef(null);
 
   const loadDashboard = async () => {
     setLoading(true);
@@ -95,14 +98,19 @@ const Dashboard = () => {
       }
     });
 
-    // `sales` comes back newest-first, so grouping-by-insertion-order and
-    // slicing the last 7 was actually grabbing the 7 OLDEST sale-dates in
-    // the whole history (backwards, and reversed left-to-right too) —
-    // sort chronologically first, then take the most recent 7 days.
-    return Object.values(map)
-      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-      .slice(-7);
+    // Full history, oldest to newest — the chart is horizontally scrollable
+    // (see below) so every peak stays visible instead of only the last 7 days.
+    return Object.values(map).sort((a, b) =>
+      a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+    );
   }, [sales]);
+
+  // Default the scroll position to the right edge (latest data) whenever the
+  // chart's data changes, so it opens on "now" but can be scrolled back.
+  useEffect(() => {
+    const el = salesChartScrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [salesChart]);
 
   const installmentChart = useMemo(() => {
     return [
@@ -218,13 +226,24 @@ const Dashboard = () => {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-white">Sales Overview</h2>
             <span className="text-xs text-yellow-300 bg-yellow-500/10 px-3 py-1 rounded-full">
-              Recent Activity
+              {salesChart.length > 1
+                ? "Scroll to see full history"
+                : "Recent Activity"}
             </span>
           </div>
 
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={salesChart}>
+          <div ref={salesChartScrollRef} className="h-72 overflow-x-auto overflow-y-hidden">
+            <div
+              style={{
+                width: Math.max(
+                  salesChart.length * SALES_CHART_POINT_WIDTH,
+                  600
+                ),
+                height: "100%",
+              }}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={salesChart}>
                 <defs>
                   <linearGradient id="cash" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#facc15" stopOpacity={0.7} />
@@ -260,8 +279,9 @@ const Dashboard = () => {
                   strokeWidth={3}
                   fill="url(#installment)"
                 />
-              </AreaChart>
-            </ResponsiveContainer>
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </AnimatedPanel>
 
