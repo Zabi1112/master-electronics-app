@@ -70,21 +70,38 @@ const Dashboard = () => {
     const map = {};
 
     sales.forEach((sale) => {
-      const date = new Date(sale.createdAt).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
+      const created = new Date(sale.createdAt);
+      // Sortable, year-safe grouping key — the old code grouped by the
+      // locale-formatted "Aug 13" label directly, which silently merged
+      // sales from different years landing on the same month/day.
+      const key = created.toISOString().split("T")[0];
 
-      if (!map[date]) map[date] = { date, cash: 0, installment: 0 };
+      if (!map[key]) {
+        map[key] = {
+          key,
+          date: created.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          }),
+          cash: 0,
+          installment: 0,
+        };
+      }
 
       if (sale.saleType === "cash") {
-        map[date].cash += Number(sale.finalAmount || 0);
+        map[key].cash += Number(sale.finalAmount || 0);
       } else {
-        map[date].installment += Number(sale.finalAmount || 0);
+        map[key].installment += Number(sale.finalAmount || 0);
       }
     });
 
-    return Object.values(map).slice(-7);
+    // `sales` comes back newest-first, so grouping-by-insertion-order and
+    // slicing the last 7 was actually grabbing the 7 OLDEST sale-dates in
+    // the whole history (backwards, and reversed left-to-right too) —
+    // sort chronologically first, then take the most recent 7 days.
+    return Object.values(map)
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .slice(-7);
   }, [sales]);
 
   const installmentChart = useMemo(() => {
