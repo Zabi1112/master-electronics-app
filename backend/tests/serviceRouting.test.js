@@ -5,12 +5,12 @@ const config = require("../../vercel.json");
 const prefix = require("../middleware/servicePrefix");
 
 test("public API routes select backend before frontend fallback", () => {
-  for (const path of ["/_backend/api/sales", "/_backend", "/api/auth/login", "/api/missing", "/dashboard"]) {
+  for (const path of ["/_backend/api/sales", "/_backend", "/api/auth/login", "/api/missing", "/dashboard", "/"]) {
     const selected = config.rewrites.find(rule => {
       const base = rule.source.replace("/:path*", "");
       return !base || path === base || path.startsWith(base + "/");
     });
-    assert.equal(selected.destination.service, path === "/dashboard" ? "frontend" : "backend");
+    assert.equal(selected.destination.service, ["/dashboard", "/"].includes(path) ? "frontend" : "backend");
   }
 });
 
@@ -33,4 +33,9 @@ test("Express accepts public and local API paths, preserving query strings and P
       assert.match(response.headers.get("content-type"), /application\/json/);
     }
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+ test("homepage resolves to the actual frontend index file", () => {
+  const home = config.rewrites.find(rule => rule.source === "/");
+  assert.deepEqual(home.destination, { service: "frontend", path: "/index.html" });
 });

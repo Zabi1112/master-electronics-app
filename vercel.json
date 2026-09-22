@@ -33,6 +33,13 @@
       }
     },
     {
+      "source": "/",
+      "destination": {
+        "service": "frontend",
+        "path": "/index.html"
+      }
+    },
+    {
       "source": "/:path*",
       "destination": {
         "service": "frontend"
