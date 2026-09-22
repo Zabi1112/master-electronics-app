@@ -26,6 +26,7 @@ import {
   YAxis,
 } from "recharts";
 import api from "../api/api";
+import { readDashboardResponses } from "../api/responseValidation";
 
 const formatMoney = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
 
@@ -42,10 +43,12 @@ const Dashboard = () => {
   const [products, setProducts] = useState([]);
   const [overdue, setOverdue] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const salesChartScrollRef = useRef(null);
 
   const loadDashboard = async () => {
     setLoading(true);
+    setError("");
     try {
       const [statsRes, salesRes, productsRes, overdueRes] = await Promise.all([
         api.get("/dashboard/stats"),
@@ -54,12 +57,13 @@ const Dashboard = () => {
         api.get("/installments/overdue"),
       ]);
 
-      setStats(statsRes.data);
-      setSales(salesRes.data || []);
-      setProducts(productsRes.data || []);
-      setOverdue(overdueRes.data || []);
+      const data = readDashboardResponses([statsRes, salesRes, productsRes, overdueRes]);
+      setStats(data.stats);
+      setSales(data.sales);
+      setProducts(data.products);
+      setOverdue(data.overdue);
     } catch (error) {
-      console.log("Dashboard load error:", error.response?.data || error);
+      setError(error.response?.data?.message || error.message || "Unable to load dashboard.");
     } finally {
       setLoading(false);
     }
@@ -74,6 +78,7 @@ const Dashboard = () => {
 
     sales.forEach((sale) => {
       const created = new Date(sale.createdAt);
+      if (!Number.isFinite(created.getTime())) return;
       // Sortable, year-safe grouping key — the old code grouped by the
       // locale-formatted "Aug 13" label directly, which silently merged
       // sales from different years landing on the same month/day.
@@ -139,6 +144,18 @@ const Dashboard = () => {
 
   const topDueCustomers = overdue.slice(0, 5);
 
+  if (!stats && error) {
+    return (
+      <div role="alert" className="min-h-[70vh] flex flex-col items-center justify-center gap-4 text-center">
+        <h1 className="text-xl font-bold text-white">Unable to load dashboard</h1>
+        <p className="text-gray-300">{error}</p>
+        <button onClick={loadDashboard} disabled={loading} className="rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black">
+          {loading ? "Retrying..." : "Try again"}
+        </button>
+      </div>
+    );
+  }
+
   if (!stats) {
     return (
       <div className="min-h-[70vh] flex items-center justify-center">
@@ -156,6 +173,7 @@ const Dashboard = () => {
 
   return (
     <div className="pb-24">
+      {error && <p role="alert" className="mb-4 rounded-xl bg-red-950 p-4 text-red-200">{error} Showing previously loaded data.</p>}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
         <div>
           <motion.h1

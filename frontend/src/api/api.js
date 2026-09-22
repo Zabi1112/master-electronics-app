@@ -1,11 +1,14 @@
+import { Capacitor } from "@capacitor/core";
+import { resolveApiBaseUrl } from "./baseUrl";
+import { requireJsonResponse } from "./responseValidation";
 import axios from "axios";
 import { startRequest, endRequest } from "../store/loadingStore";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD
-    ? "https://master-electronics-app.vercel.app/_backend/api"
-    : "http://localhost:5000/api");
+const API_BASE_URL = resolveApiBaseUrl({
+  configured: import.meta.env.VITE_API_URL,
+  production: import.meta.env.PROD,
+  native: Capacitor.isNativePlatform(),
+});
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -29,7 +32,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => {
     endRequest();
-    return response;
+    return requireJsonResponse(response);
   },
   (error) => {
     endRequest();
