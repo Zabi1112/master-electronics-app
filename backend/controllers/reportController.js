@@ -1,3 +1,4 @@
+const { nonCancelledSaleWhere, nonCancelledSaleInclude } = require("../utils/saleStatus");
 const { Op, fn, col } = require("sequelize");
 const {
     Sale,
@@ -63,6 +64,7 @@ exports.salesReport = async (req, res) => {
 
         const where = {
             ...getDateFilter(from, to),
+            ...nonCancelledSaleWhere(),
         };
 
         if (saleType) where.saleType = saleType;
@@ -117,7 +119,7 @@ exports.installmentReport = async (req, res) => {
             where,
             include: [
                 { model: Customer, as: "customer" },
-                { model: Sale, as: "sale" },
+                nonCancelledSaleInclude(Sale),
                 {
                     model: User,
                     as: "receiver",
@@ -140,11 +142,11 @@ exports.installmentReport = async (req, res) => {
         });
 
         const summary = {
-            totalInstallmentAmount: await sumField(Installment, "amount", where),
-            totalPaid: await sumField(Installment, "paidAmount", where),
-            totalRemaining: await sumField(Installment, "remainingAmount", where),
-            totalFinePaid: await sumField(Installment, "finePaid", where),
-            totalFineDiscount: await sumField(Installment, "fineDiscount", where),
+            totalInstallmentAmount: data.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+            totalPaid: data.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0),
+            totalRemaining: data.reduce((sum, item) => sum + Number(item.remainingAmount || 0), 0),
+            totalFinePaid: data.reduce((sum, item) => sum + Number(item.finePaid || 0), 0),
+            totalFineDiscount: data.reduce((sum, item) => sum + Number(item.fineDiscount || 0), 0),
         };
 
         res.json({ summary, installments: data });
@@ -169,7 +171,7 @@ exports.overdueReport = async (req, res) => {
       where,
       include: [
         { model: Customer, as: "customer" },
-        { model: Sale, as: "sale" },
+        nonCancelledSaleInclude(Sale),
         {
           model: User,
           as: "receiver",
@@ -338,6 +340,7 @@ exports.profitReport = async (req, res) => {
 
         const where = {
             ...getDateFilter(from, to),
+            ...nonCancelledSaleWhere(),
         };
 
         const summary = {

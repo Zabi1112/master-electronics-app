@@ -1,3 +1,4 @@
+const { nonCancelledSaleWhere, nonCancelledSaleInclude } = require("../utils/saleStatus");
 const { Op } = require("sequelize");
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
@@ -268,6 +269,11 @@ exports.payInstallment = async (req, res) => {
       return res.status(404).json({ message: "Sale not found" });
     }
 
+    if (sale.status === "cancelled") {
+      await t.rollback();
+      return res.status(400).json({ message: "Cancelled sales have no payable installments" });
+    }
+
     if (reduceFinalAmount !== null) {
       const isLastInstallment =
         installment.installmentNo === Number(sale.installmentMonths);
@@ -477,7 +483,7 @@ exports.getPendingInstallments = async (req, res) => {
       },
       include: [
         { model: Customer, as: "customer" },
-        { model: Sale, as: "sale" },
+        nonCancelledSaleInclude(Sale),
         {
           model: User,
           as: "receiver",
@@ -524,7 +530,7 @@ exports.getOverdueInstallments = async (req, res) => {
       },
       include: [
         { model: Customer, as: "customer" },
-        { model: Sale, as: "sale" },
+        nonCancelledSaleInclude(Sale),
         {
           model: User,
           as: "receiver",
@@ -580,6 +586,7 @@ exports.getCustomerInstallmentItems = async (req, res) => {
       where: {
         customerId: req.params.customerId,
         saleType: "installment",
+        ...nonCancelledSaleWhere(),
       },
       include: [
         {
@@ -617,6 +624,7 @@ exports.getAllInstallmentSaleItems = async (req, res) => {
     const sales = await Sale.findAll({
       where: {
         saleType: "installment",
+        ...nonCancelledSaleWhere(),
       },
       include: [
         {
@@ -736,6 +744,11 @@ exports.correctInstallment = async (req, res) => {
     if (!sale) {
       await t.rollback();
       return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (sale.status === "cancelled") {
+      await t.rollback();
+      return res.status(400).json({ message: "Cancelled sales have no payable installments" });
     }
 
     const oldSaleSnapshot = sale.toJSON();
@@ -928,8 +941,7 @@ exports.getDueThisMonth = async (req, res) => {
     const endDate = new Date(year, mon, 0).toISOString().split("T")[0]; // last day of month
 
     const saleInclude = {
-      model: Sale,
-      as: "sale",
+      ...nonCancelledSaleInclude(Sale),
       include: [
         {
           model: SaleItem,
@@ -942,7 +954,7 @@ exports.getDueThisMonth = async (req, res) => {
     if (planMonths) {
       // Restricts to sales on this installment plan duration (e.g. next month's
       // 3/6/12-month plan collections) - requires the join since the filter is on Sale.
-      saleInclude.where = { installmentMonths: Number(planMonths) };
+      saleInclude.where.installmentMonths = Number(planMonths);
       saleInclude.required = true;
     }
 
@@ -1043,8 +1055,7 @@ exports.getSaleInstallments = async (req, res) => {
           as: "customer",
         },
         {
-          model: Sale,
-          as: "sale",
+          ...nonCancelledSaleInclude(Sale),
         },
         {
           model: User,

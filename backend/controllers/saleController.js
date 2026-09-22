@@ -603,6 +603,11 @@ exports.payCashSaleBalance = async (req, res) => {
       return res.status(404).json({ message: "Sale not found" });
     }
 
+    if (sale.status === "cancelled") {
+      await t.rollback();
+      return res.status(400).json({ message: "Cancelled sales have no payable balance" });
+    }
+
     if (sale.saleType !== "cash") {
       await t.rollback();
       return res.status(400).json({

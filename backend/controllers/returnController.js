@@ -1,6 +1,7 @@
+const { clearCancelledSaleBalance } = require("../utils/saleStatus");
 const { getSequelize } = require("../config/db");
 const sequelize = getSequelize();
-const { Sale, SaleItem, Product, ProductBatch, SaleReturn, Customer, User } = require("../models");
+const { Sale, SaleItem, Installment, Product, ProductBatch, SaleReturn, Customer, User } = require("../models");
 const logActivity = require("../utils/activityLogger");
 
 const getToday = () => new Date().toISOString().split("T")[0];
@@ -36,13 +37,25 @@ exports.createReturn = async (req, res) => {
       });
     }
 
+    // Match the payment flow: lock installments before their parent sale.
+    await Installment.findAll({
+      where: { saleId }, order: [["id", "ASC"]],
+      transaction: t, lock: t.LOCK.UPDATE,
+    });
+
     const sale = await Sale.findByPk(saleId, {
+      lock: { level: t.LOCK.UPDATE, of: Sale },
       include: [{ model: SaleItem, as: "items" }],
       transaction: t,
     });
     if (!sale) {
       await t.rollback();
       return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (sale.status === "cancelled") {
+      await t.rollback();
+      return res.status(400).json({ message: "Sale is already cancelled" });
     }
 
     const saleItem = (sale.items || []).find(
@@ -183,8 +196,8 @@ exports.createReturn = async (req, res) => {
     );
 
     if (allItemsFullyReturned) {
-      sale.status = "cancelled";
-      await sale.save({ transaction: t });
+      await sale.update({ status: "cancelled" }, { transaction: t });
+      await clearCancelledSaleBalance(sale, Installment, t);
     }
 
     await t.commit();

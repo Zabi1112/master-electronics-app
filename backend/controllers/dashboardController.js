@@ -1,3 +1,4 @@
+const { nonCancelledSaleWhere, nonCancelledSaleInclude } = require("../utils/saleStatus");
 const { Op, fn, col } = require("sequelize");
 const { Product, ProductBatch, Sale, Installment, Partner, DonationRecord, Expense} = require("../models");
 const { getOrCreateShopAccount } = require("./shopAccountController");
@@ -5,8 +6,9 @@ const { getOrCreateShopAccount } = require("./shopAccountController");
 
 const sumField = async (Model, field, where = {}) => {
   const result = await Model.findOne({
-    attributes: [[fn("SUM", col(field)), "total"]],
-    where,
+    attributes: [[fn("SUM", col(`${Model.name}.${field}`)), "total"]],
+    where: Model === Sale ? { ...nonCancelledSaleWhere(), ...where } : where,
+    ...(Model === Installment ? { include: [{ ...nonCancelledSaleInclude(Sale), attributes: [] }] } : {}),
     raw: true,
   });
 
@@ -86,6 +88,7 @@ exports.getDashboardStats = async (req, res) => {
       Sale.count({ where: { saleType: "installment", status: "active" } }),
       Sale.count({ where: { saleType: "installment", status: "cleared" } }),
       Installment.count({
+        include: [{ ...nonCancelledSaleInclude(Sale), attributes: [] }],
         where: {
           dueDate: { [Op.lt]: today },
           status: { [Op.in]: ["pending", "partial"] },
