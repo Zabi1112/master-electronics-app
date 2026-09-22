@@ -7,6 +7,7 @@ const cors = require("cors");
 const { connectDB, getSequelize } = require("./config/db");
 
 const app = express();
+app.use(require("./middleware/servicePrefix"));
 
 // CORS configuration with credentials support
 app.use(
