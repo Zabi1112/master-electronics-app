@@ -60,7 +60,12 @@ exports.payInstallment = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
-    const { amount, fineDiscount = 0, notes, newFinalAmount } = req.body;
+    const { amount, fineDiscount = 0, notes, newFinalAmount, paymentMode = "complete", extensionDueDate } = req.body;
+    if (!["complete", "partial", "extend"].includes(paymentMode)) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid payment mode" });
+    }
+    let extendedInstallment = null;
 
     const installment = await Installment.findByPk(req.params.id, {
       transaction: t,
@@ -80,9 +85,14 @@ exports.payInstallment = async (req, res) => {
     const payAmount = Number(amount);
     const discountFine = Number(fineDiscount || 0);
 
-    if (!payAmount || payAmount <= 0) {
+    if (!Number.isFinite(payAmount) || payAmount <= 0) {
       await t.rollback();
       return res.status(400).json({ message: "Invalid payment amount" });
+    }
+
+    if (!Number.isFinite(discountFine) || discountFine < 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Invalid fine discount" });
     }
 
     // Admin-only: at the final installment, the price actually being
@@ -98,6 +108,10 @@ exports.payInstallment = async (req, res) => {
       newFinalAmount !== null &&
       newFinalAmount !== ""
     ) {
+      if (paymentMode !== "complete") {
+        await t.rollback();
+        return res.status(400).json({ message: "Price reduction cannot be combined with a partial payment or extension" });
+      }
       if (req.user.role !== "admin") {
         await t.rollback();
         return res.status(403).json({
@@ -139,7 +153,16 @@ exports.payInstallment = async (req, res) => {
     let futureInstallments = [];
     let reamortizedDelta = 0;
 
-    if (delta !== 0 && payAmount >= finalFineAmount) {
+    if (paymentMode !== "complete" && delta > 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "Partial or extension payments cannot exceed this installment's payable amount" });
+    }
+    if (paymentMode === "extend" && (delta >= 0 || payAmount < finalFineAmount)) {
+      await t.rollback();
+      return res.status(400).json({ message: "An extension requires unpaid principal and payment of the remaining fine" });
+    }
+
+    if (paymentMode === "complete" && delta !== 0 && payAmount >= finalFineAmount) {
       futureInstallments = await Installment.findAll({
         where: {
           saleId: installment.saleId,
@@ -274,9 +297,41 @@ exports.payInstallment = async (req, res) => {
       return res.status(400).json({ message: "Cancelled sales have no payable installments" });
     }
 
+    const lastInstallmentNo = Number(await Installment.max("installmentNo", {
+      where: { saleId: sale.id }, transaction: t,
+    }));
+
+    if (paymentMode === "extend") {
+      const parsedDate = new Date(extensionDueDate + "T00:00:00Z");
+      const validDate = typeof extensionDueDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(extensionDueDate) &&
+        Number.isFinite(parsedDate.getTime()) && parsedDate.toISOString().slice(0, 10) === extensionDueDate;
+      if (installment.installmentNo !== lastInstallmentNo || !validDate ||
+          extensionDueDate <= installment.dueDate || extensionDueDate <= todayDate()) {
+        await t.rollback();
+        return res.status(400).json({ message: "Only the last installment can be extended; choose a valid date after today and its current due date" });
+      }
+      const balance = Number(installment.remainingAmount);
+      extendedInstallment = await Installment.create({
+        saleId: sale.id, customerId: installment.customerId,
+        installmentNo: lastInstallmentNo + 1, dueDate: extensionDueDate,
+        amount: balance, remainingAmount: balance, paidAmount: 0,
+        finePercentPerDay: installment.finePercentPerDay, status: "pending",
+        notes: "Balance extended from installment #" + installment.installmentNo,
+      }, { transaction: t });
+      installment.amount = Number(installment.paidAmount);
+      installment.remainingAmount = 0;
+      installment.status = "paid";
+      installment.paidDate = todayDate();
+      sale.expectedClearDate = extensionDueDate;
+    }
+
+    if (paymentMode === "complete" && installment.remainingAmount > 0 && reduceFinalAmount === null) {
+      await t.rollback();
+      return res.status(400).json({ message: "Unpaid balance remains. Choose Partial to pay more later, or Extend on the last installment" });
+    }
+
     if (reduceFinalAmount !== null) {
-      const isLastInstallment =
-        installment.installmentNo === Number(sale.installmentMonths);
+      const isLastInstallment = installment.installmentNo === lastInstallmentNo;
 
       if (!isLastInstallment) {
         await t.rollback();
@@ -410,6 +465,11 @@ exports.payInstallment = async (req, res) => {
       )} carried forward across ${futureInstallments.length} future installment(s)`;
     }
 
+    if (extendedInstallment) {
+      description += " | Balance Rs. " + extendedInstallment.amount + " extended to " + extendedInstallment.dueDate;
+    }
+    if (paymentMode === "partial") description += " | Partial payment; balance retained on this installment";
+
     if (reduceFinalAmount !== null) {
       description += ` | Final sale amount reduced Rs. ${previousFinalAmountForLog} -> Rs. ${reduceFinalAmount}: ${notes}`;
     }
@@ -424,6 +484,8 @@ exports.payInstallment = async (req, res) => {
         installment: installment.toJSON(),
         sale: sale.toJSON(),
         payment: {
+          paymentMode,
+          extendedInstallment: extendedInstallment?.toJSON() || null,
           amount: payAmount,
           installmentPaid: installmentPaidNow,
           finePaid: finePaidNow,
@@ -453,6 +515,8 @@ exports.payInstallment = async (req, res) => {
       excessAmount: reamortizedDelta,
       reamortized: reamortizedDelta !== 0,
       updatedFutureInstallments: futureInstallments,
+      paymentMode,
+      extendedInstallment,
       priceReduced:
         reduceFinalAmount !== null
           ? {

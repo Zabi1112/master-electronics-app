@@ -84,6 +84,8 @@ const Installments = () => {
     fineDiscount: 0,
     notes: "",
     newFinalAmount: "",
+      paymentMode: "complete",
+      extensionDueDate: "",
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [lastPayment, setLastPayment] = useState(null);
@@ -262,19 +264,22 @@ const Installments = () => {
   }, [installments]);
 
   const openPayment = (item) => {
+    setError("");
     setPaymentModal(item);
     setPaymentForm({
       amount: item.liveTotalPayable || item.remainingAmount || "",
       fineDiscount: 0,
       notes: "",
       newFinalAmount: "",
+      paymentMode: "complete",
+      extensionDueDate: "",
     });
   };
 
   const isLastInstallmentForPayment =
     !!paymentModal &&
     !!selectedSale &&
-    paymentModal.installmentNo === selectedSale.installmentMonths;
+    Number(paymentModal.installmentNo) === Math.max(...installments.map(item => Number(item.installmentNo)));
 
   const submitPayment = async (e) => {
     e.preventDefault();
@@ -293,6 +298,8 @@ const Installments = () => {
         amount: Number(paymentForm.amount || 0),
         fineDiscount: Number(paymentForm.fineDiscount || 0),
         notes: paymentForm.notes,
+        paymentMode: paymentForm.paymentMode,
+        extensionDueDate: paymentForm.paymentMode === "extend" ? paymentForm.extensionDueDate : undefined,
       };
 
       if (paymentForm.newFinalAmount !== "") {
@@ -709,7 +716,7 @@ const Installments = () => {
                             onClick={() => openPayment(item)}
                             className="bg-yellow-500 text-black px-4 py-2 rounded-lg font-bold"
                           >
-                            Pay
+                            {item.status === "partial" ? "Add payment" : "Pay"}
                           </button>
                         ) : (
                           <button
@@ -770,7 +777,7 @@ const Installments = () => {
                     onClick={() => openPayment(item)}
                     className="mt-4 w-full bg-yellow-500 text-black py-3 rounded-xl font-bold"
                   >
-                    Receive Payment
+                    {item.status === "partial" ? "Add payment" : "Receive Payment"}
                   </button>
                 ) : (
                   <button
@@ -936,7 +943,7 @@ const Installments = () => {
         <div className="fixed inset-0 bg-black/80 z-50 flex items-end md:items-center justify-center p-4">
           <form
             onSubmit={submitPayment}
-            className="w-full max-w-lg bg-[#0b0b0b] border border-yellow-600/40 rounded-3xl p-5"
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-[#0b0b0b] border border-yellow-600/40 rounded-3xl p-5"
           >
             <h2 className="text-xl font-bold text-yellow-400 mb-2">
               Receive Payment
@@ -959,6 +966,37 @@ const Installments = () => {
                 value={`Rs. ${money(paymentModal.liveTotalPayable)}`}
               />
             </div>
+
+            {error && <p role="alert" className="mb-3 rounded-xl bg-red-950 p-3 text-red-200">{error}</p>}
+            <label className="block text-sm text-gray-300 mb-3">
+              Payment status
+              <select
+                aria-label="Payment status"
+                className="w-full px-4 py-3 rounded-xl bg-white text-black mt-1"
+                value={paymentForm.paymentMode}
+                onChange={(e) => setPaymentForm({ ...paymentForm, paymentMode: e.target.value, newFinalAmount: "" })}
+              >
+                <option value="complete">Complete (default)</option>
+                <option value="partial">Partial ? add more to this installment later</option>
+                {isLastInstallmentForPayment && <option value="extend">Extend ? move balance to a new installment</option>}
+              </select>
+            </label>
+            <p className="text-xs text-gray-400 mb-3">
+              {paymentForm.paymentMode === "partial"
+                ? "The unpaid balance stays on this installment. Use Add payment later to finish it."
+                : paymentForm.paymentMode === "extend"
+                ? "The unpaid balance becomes a new installment. The total sale amount stays the same."
+                : "Completes this installment and spreads any shortfall across future installments. For a short final payment, choose Partial or Extend."}
+            </p>
+            {paymentForm.paymentMode === "extend" && (
+              <label className="block text-sm text-gray-300 mb-3">
+                New installment due date
+                <input type="date" required aria-label="New installment due date"
+                  className="w-full px-4 py-3 rounded-xl bg-white text-black mt-1"
+                  value={paymentForm.extensionDueDate}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, extensionDueDate: e.target.value })} />
+              </label>
+            )}
 
             <input
               type="number"
@@ -984,7 +1022,7 @@ const Installments = () => {
               }
             />
 
-            {isAdmin && isLastInstallmentForPayment && (
+            {isAdmin && isLastInstallmentForPayment && paymentForm.paymentMode === "complete" && (
               <div className="bg-purple-600/10 border border-purple-500/30 rounded-xl p-3 mb-3">
                 <label className="block text-xs text-purple-300 mb-1">
                   Reduce Final Sale Amount To (optional, admin — this is the
